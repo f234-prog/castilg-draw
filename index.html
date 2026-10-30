@@ -1,0 +1,3108 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>鑄造科製圖政策島｜六島三十題 3D 互動闖關群島</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <!-- Three.js & OrbitControls via Importmap -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <style>
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            margin: 0;
+            overflow: hidden;
+            background-color: #0f172a;
+            color: #f8fafc;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        /* 3D Floating Labels Overlay */
+        #labelsContainer {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 10;
+        }
+
+        .island-label {
+            position: absolute;
+            transform: translate(-50%, -100%);
+            pointer-events: auto;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            cursor: pointer;
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s;
+        }
+        .island-label:hover, .island-label:active {
+            transform: translate(-50%, -108%) scale(1.06);
+            z-index: 30;
+        }
+
+        .building-pin {
+            position: absolute;
+            transform: translate(-50%, -100%);
+            pointer-events: auto;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            cursor: pointer;
+            transition: transform 0.18s ease, opacity 0.18s ease;
+        }
+        .building-pin:hover, .building-pin:active {
+            transform: translate(-50%, -112%) scale(1.15);
+            z-index: 40;
+        }
+
+        /* Dedicated Touch Canvas inside Modal - Enforced min-height so mobile flexbox never collapses it */
+        #modalThreeContainer {
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
+            height: 270px;
+            min-height: 270px;
+            flex-shrink: 0;
+        }
+        @media (min-width: 768px) {
+            #modalThreeContainer {
+                height: 350px;
+                min-height: 350px;
+            }
+        }
+        #modalThreeContainer canvas {
+            display: block;
+            width: 100% !important;
+            height: 100% !important;
+            touch-action: none;
+        }
+
+        .collab-label {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+
+        .npc-bubble {
+            position: absolute;
+            transform: translate(-50%, -120%);
+            pointer-events: auto;
+            touch-action: manipulation;
+            cursor: pointer;
+            animation: floatBubble 2.2s ease-in-out infinite;
+        }
+        @keyframes floatBubble {
+            0%, 100% { transform: translate(-50%, -120%); }
+            50% { transform: translate(-50%, -132%); }
+        }
+
+        @keyframes pulseRing {
+            0% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.8); }
+            70% { box-shadow: 0 0 0 12px rgba(244, 63, 94, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+        }
+        .search-highlight-pin {
+            animation: pulseRing 1.4s infinite;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 9999px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+        /* Print Styles for Certificate */
+        @media print {
+            body * { visibility: hidden; }
+            #certificateModal, #certificateModal * { visibility: visible; }
+            #certificateModal {
+                position: fixed;
+                inset: 0;
+                background: white !important;
+                display: flex !important;
+                align-items: center;
+                justify-content: center;
+                padding: 0 !important;
+            }
+            .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body class="relative w-screen h-[100dvh] overflow-hidden">
+
+    <!-- ================= 1. MAIN 3D WEBGL CANVAS (CATAN HEX ARCHIPELAGO) ================= -->
+    <div id="mainCanvasContainer" class="absolute inset-0 z-0 cursor-grab active:cursor-grabbing touch-none"></div>
+
+    <!-- ================= 2. 3D FLOATING HTML LABELS & PINS CONTAINER ================= -->
+    <div id="labelsContainer"></div>
+
+    <!-- ================= 3. TOP HUD BAR (POINTER-EVENTS-NONE WRAPPER) ================= -->
+    <header class="absolute top-0 left-0 right-0 z-20 p-2 md:p-3.5 pointer-events-none flex flex-col gap-1.5">
+        <div class="max-w-7xl mx-auto w-full flex flex-wrap items-center justify-between gap-2">
+            
+            <!-- Left: Brand Logo & Title -->
+            <div class="pointer-events-auto flex items-center gap-2.5 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 px-3 py-1.5 rounded-2xl shadow-xl">
+                <div class="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-amber-400 via-orange-500 to-rose-600 flex items-center justify-center text-slate-950 font-black text-base md:text-lg shadow-md shrink-0">
+                    <i class="fa-solid fa-cubes-stacked"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-1">
+                        <span class="px-1.5 py-0.5 text-[9px] md:text-[10px] font-black bg-sky-500/20 text-sky-300 border border-sky-400/30 rounded-full">HEART 3D 政策島</span>
+                        <span class="px-1.5 py-0.5 text-[9px] md:text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-400/30 rounded-full">手機＋電腦雙平台</span>
+                    </div>
+                    <h1 class="text-xs sm:text-sm md:text-base font-black text-white tracking-tight">
+                        高職鑄造科｜正投影與丙檢識圖 3D 闖關島
+                    </h1>
+                </div>
+            </div>
+
+            <!-- Center: Keyword Search Bar with Instant Filter -->
+            <div class="pointer-events-auto relative flex-1 max-w-sm min-w-[160px] order-3 lg:order-2 w-full lg:w-auto">
+                <div class="flex items-center bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-2xl px-3 py-1.5 shadow-xl focus-within:border-sky-400 transition">
+                    <i class="fa-solid fa-magnifying-glass text-sky-400 text-xs mr-2"></i>
+                    <input id="searchInput" type="text" placeholder="搜尋 30 座鑄件：單斜面、複斜面、丙檢、等角..." 
+                        class="bg-transparent text-xs text-white placeholder-slate-400 focus:outline-none w-full font-medium"
+                        oninput="window.app.handleSearch(this.value)"
+                        onfocus="window.app.handleSearch(this.value)">
+                    <button id="clearSearchBtn" onclick="window.app.clearSearch()" class="hidden text-slate-400 hover:text-white text-xs ml-1">
+                        <i class="fa-solid fa-circle-xmark"></i>
+                    </button>
+                </div>
+                <!-- Search Dropdown Results -->
+                <div id="searchDropdown" class="hidden absolute left-0 right-0 mt-1.5 bg-slate-900/95 backdrop-blur-xl border border-slate-700 rounded-2xl shadow-2xl max-h-60 overflow-y-auto z-50 p-2 space-y-1"></div>
+            </div>
+
+            <!-- Right: Student Avatar Badge, Progress & Certificate -->
+            <div class="pointer-events-auto flex flex-wrap items-center gap-1.5 order-2 lg:order-3">
+                <!-- Student Profile & Paper-Doll Button -->
+                <button onclick="window.app.openAvatarModal()" class="flex items-center gap-2 bg-slate-900/90 hover:bg-slate-800 backdrop-blur-md border border-slate-700/80 px-2.5 py-1.5 rounded-2xl shadow-xl transition" title="自訂紙娃娃與學號姓名">
+                    <div id="hudAvatarIcon" class="w-7 h-7 rounded-lg bg-orange-500/20 border border-orange-400/40 flex items-center justify-center text-sm">
+                        🧑‍🏭
+                    </div>
+                    <div class="text-left hidden sm:block">
+                        <div id="hudStudentName" class="text-[11px] font-black text-white leading-tight">鑄造一甲｜01 王小明</div>
+                        <div id="hudStudentTitle" class="text-[9px] text-amber-300 font-bold">正投影探險家 ✎</div>
+                    </div>
+                </button>
+
+                <!-- Overall Progress Pill -->
+                <div class="bg-slate-900/90 backdrop-blur-md border border-slate-700/80 px-2.5 py-1.5 rounded-2xl shadow-xl flex items-center gap-2">
+                    <div>
+                        <div class="text-[9px] text-slate-400 font-bold hidden md:block">六島三十題</div>
+                        <div class="text-[11px] font-black text-emerald-400">
+                            <span id="hudSolvedCount">0</span>/30題 (<span id="hudIslandsCleared">0</span>/6島)
+                        </div>
+                    </div>
+                    <div class="w-12 sm:w-16 h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                        <div id="hudProgressBar" class="h-full bg-gradient-to-r from-emerald-500 to-teal-300 transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <!-- Weekly Schedule Modal Button -->
+                <button onclick="window.app.openScheduleModal()" class="px-2.5 py-1.5 rounded-2xl bg-indigo-600/90 hover:bg-indigo-500 text-white font-bold text-xs shadow-xl transition flex items-center gap-1 border border-indigo-400/30" title="週規劃表與30座鑄件總覽">
+                    <i class="fa-solid fa-calendar-check"></i>
+                    <span class="hidden md:inline">週規劃表</span>
+                </button>
+
+                <!-- Island Photo Check-in Button -->
+                <button onclick="window.app.openPhotoModal()" class="px-2.5 py-1.5 rounded-2xl bg-sky-600/90 hover:bg-sky-500 text-white font-bold text-xs shadow-xl transition flex items-center gap-1 border border-sky-400/30" title="與 3D 政策島打卡合照">
+                    <i class="fa-solid fa-camera-retro"></i>
+                    <span class="hidden md:inline">打卡</span>
+                </button>
+
+                <!-- Certificate Button -->
+                <button id="hudCertBtn" onclick="window.app.openCertificateModal()" class="px-3 py-1.5 rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 text-slate-950 font-black text-xs shadow-xl shadow-amber-500/20 transition flex items-center gap-1">
+                    <i class="fa-solid fa-award"></i>
+                    <span>證書</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Sub-row: Textbook 5-10-4 Color Legend + Teacher Quick Tools -->
+        <div class="max-w-7xl mx-auto w-full flex flex-wrap items-center justify-between gap-1.5">
+            <!-- Textbook 5-10-4 Standard Color Legend -->
+            <div class="pointer-events-auto flex flex-wrap items-center gap-1.5 bg-slate-900/80 backdrop-blur-md border border-slate-700/70 px-2.5 py-1 rounded-xl text-[10px] md:text-[11px] shadow">
+                <span class="text-slate-400 font-bold hidden sm:inline">課本 5-10-4 色塊：</span>
+                <span class="flex items-center gap-1 font-bold text-white"><span class="w-2.5 h-2.5 rounded-xs bg-[#22c55e] inline-block"></span>前視(綠)</span>
+                <span class="flex items-center gap-1 font-bold text-white"><span class="w-2.5 h-2.5 rounded-xs bg-[#eab308] inline-block"></span>俯視(黃)</span>
+                <span class="flex items-center gap-1 font-bold text-white"><span class="w-2.5 h-2.5 rounded-xs bg-[#ef4444] inline-block"></span>側視(紅)</span>
+                <span class="flex items-center gap-1 font-bold text-white"><span class="w-2.5 h-2.5 rounded-xs bg-[#3b82f6] inline-block"></span>單斜(藍)</span>
+                <span class="flex items-center gap-1 font-bold text-white"><span class="w-2.5 h-2.5 rounded-xs bg-[#f97316] inline-block"></span>複斜(橘)</span>
+            </div>
+
+            <!-- Teacher Quick Demo & Reset Buttons -->
+            <div class="pointer-events-auto flex items-center gap-1">
+                <button onclick="window.app.openQuestion(window.app.getActiveOrFirstQuestionId())" class="px-2.5 py-1 rounded-xl bg-emerald-500/25 hover:bg-emerald-500/40 border border-emerald-400/50 text-emerald-200 text-[10px] md:text-[11px] font-black transition shadow">
+                    🧊 立即開啟「立體鑄件轉三視圖」
+                </button>
+                <button onclick="window.app.focusNPC()" class="px-2 py-1 rounded-xl bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-[10px] md:text-[11px] font-bold transition">
+                    🧑‍🏭 島長秘笈
+                </button>
+                <button onclick="window.app.triggerTeacherDemo()" class="px-2 py-1 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 border border-purple-400/40 text-purple-200 text-[10px] md:text-[11px] font-bold transition" title="教師測試：一鍵完成 30 題並預覽結業證書">
+                    ⚡ 一鍵通關
+                </button>
+                <button onclick="window.app.resetAllProgress()" class="px-2 py-1 rounded-xl bg-rose-600/25 hover:bg-rose-600/45 border border-rose-400/30 text-rose-200 text-[10px] md:text-[11px] font-bold transition" title="重置答題進度">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ================= 4. BOTTOM FLOATING DOCK (手機＋電腦「本島 5 座立體鑄件」快捷列) ================= -->
+    <footer class="absolute bottom-2 md:bottom-3 left-0 right-0 z-20 px-2 md:px-3 pointer-events-none flex flex-col items-center gap-1.5">
+        
+        <!-- Always-Accessible 5-Casting Quick Selector Bar (5-Column Grid so all 5 buttons fit on mobile screen) -->
+        <div id="focusedIslandBanner" class="pointer-events-auto bg-slate-900/95 backdrop-blur-xl border-2 border-sky-400/50 px-2.5 py-2 rounded-2xl shadow-2xl flex flex-col gap-1.5 w-full max-w-4xl">
+            <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5">
+                    <span id="focusIslandBadge" class="px-2 py-0.5 rounded-lg bg-sky-500 text-slate-950 font-black text-[11px]">第一島</span>
+                    <span id="focusIslandTitle" class="font-black text-xs md:text-sm text-white">點選本島 5 座立體鑄件轉三視圖：</span>
+                </div>
+                <button id="btnReturnPanorama" onclick="window.app.focusIsland(null)" class="hidden px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold border border-slate-600 transition">
+                    <i class="fa-solid fa-globe mr-1"></i>全島鳥瞰
+                </button>
+            </div>
+            <!-- 5 Castings Grid (All 5 visible on mobile without horizontal cutoff) -->
+            <div id="focusIslandPills" class="grid grid-cols-5 gap-1 w-full"></div>
+        </div>
+
+        <!-- Main Dock Bar: Panorama, 6 Hex Islands Quick Jump, Collaboration Lines, Time of Day -->
+        <div class="pointer-events-auto bg-slate-900/95 backdrop-blur-xl border border-slate-700/90 p-1.5 md:p-2 rounded-2xl shadow-2xl flex flex-wrap items-center justify-center gap-1 max-w-full">
+            
+            <!-- Panorama Overview Button -->
+            <button id="dockBtn-all" onclick="window.app.focusIsland(null)" class="px-2.5 py-1.5 rounded-xl text-[11px] md:text-xs font-black bg-sky-500 text-slate-950 shadow transition flex items-center gap-1">
+                <i class="fa-solid fa-earth-asia"></i>
+                <span class="hidden sm:inline">全島總覽</span>
+            </button>
+
+            <!-- 6 Hexagonal Island Switchers -->
+            <div id="dockIslandsList" class="flex flex-wrap items-center gap-1"></div>
+
+            <!-- 🔗 協作線 Toggle (Collaboration Bezier Arcs) -->
+            <button id="collabToggleBtn" onclick="window.app.toggleCollabLines()" class="px-2.5 py-1.5 rounded-xl text-[11px] md:text-xs font-bold bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 transition flex items-center gap-1" title="顯示跨島知識協作線">
+                <i class="fa-solid fa-bezier-curve"></i>
+                <span class="hidden md:inline">協作線: 關</span>
+            </button>
+
+            <!-- 🌅 時間光影切換 (Dawn / Day / Night) -->
+            <div class="flex items-center bg-slate-950/90 p-0.5 rounded-xl border border-slate-800">
+                <button id="timeBtn-dawn" onclick="window.app.setTimeOfDay('dawn')" class="px-2 py-1 rounded-lg text-[10px] md:text-[11px] font-bold text-slate-400 hover:text-white transition" title="清晨光影">
+                    🌅
+                </button>
+                <button id="timeBtn-day" onclick="window.app.setTimeOfDay('day')" class="px-2 py-1 rounded-lg text-[10px] md:text-[11px] font-bold bg-sky-500 text-slate-950 shadow transition" title="白天光影">
+                    ☀️
+                </button>
+                <button id="timeBtn-night" onclick="window.app.setTimeOfDay('night')" class="px-2 py-1 rounded-lg text-[10px] md:text-[11px] font-bold text-slate-400 hover:text-white transition" title="夜晚星光">
+                    🌙
+                </button>
+            </div>
+        </div>
+    </footer>
+
+    <!-- ================= 5. MODAL A: QUESTION & 3D ORTHOGRAPHIC 3-VIEW LAB (手機＋電腦雙平台完美版) ================= -->
+    <div id="questionModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-1.5 sm:p-3 md:p-5 overflow-hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl md:rounded-3xl max-w-6xl w-full overflow-hidden shadow-2xl flex flex-col h-[96dvh] md:h-auto md:max-h-[94dvh]">
+            
+            <!-- Modal Top Header: Island Title + 5 Castings 5-Column Grid -->
+            <div class="px-3 py-2 md:px-5 md:py-3 bg-slate-800/95 border-b border-slate-700 flex flex-col gap-1.5 shrink-0">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span id="qModalIslandBadge" class="px-2 py-0.5 rounded-lg text-[11px] font-black bg-sky-500 text-slate-950 shrink-0">第一島</span>
+                        <h3 id="qModalIslandTitle" class="text-xs sm:text-sm md:text-base font-black text-white truncate">第一島：正投影原理島</h3>
+                    </div>
+                    <button onclick="window.app.closeQuestionModal()" class="w-8 h-8 rounded-xl bg-slate-700 hover:bg-rose-600 text-slate-200 hover:text-white flex items-center justify-center transition shrink-0" title="關閉視窗">
+                        <i class="fa-solid fa-xmark text-base"></i>
+                    </button>
+                </div>
+
+                <!-- 5 Castings Quick Switcher inside Modal (5-Column Grid so all 5 are always visible on mobile) -->
+                <div class="flex flex-col sm:flex-row sm:items-center gap-1">
+                    <span class="text-[11px] font-bold text-slate-400 shrink-0"><i class="fa-solid fa-cubes mr-1 text-amber-400"></i>本島 5 座鑄件：</span>
+                    <div id="qModalTabs" class="grid grid-cols-5 gap-1 w-full"></div>
+                </div>
+            </div>
+
+            <!-- Modal Body: Flex-Col on Mobile (Prevents iOS Safari Grid Height Collapse), 12-Col Grid on Desktop -->
+            <div class="flex flex-col lg:grid lg:grid-cols-12 gap-3 md:gap-5 p-2.5 sm:p-4 md:p-5 overflow-y-auto flex-1">
+                
+                <!-- LEFT (7 Cols): Dedicated Orthographic Projection 3D-to-3-View Lab -->
+                <div class="lg:col-span-7 flex flex-col bg-slate-950 border border-slate-800 rounded-2xl shrink-0">
+                    
+                    <!-- Camera View Snap Bar (5 Orthographic Modes: 3D Iso, Front, Top, Right, 4-Split L-Layout) -->
+                    <div class="p-2 md:p-3 bg-slate-900 rounded-t-2xl border-b border-slate-800 flex flex-col gap-2 shrink-0">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="flex items-center gap-1.5">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                <span id="qModalModelName" class="text-xs md:text-sm font-black text-white">3D 鑄件轉三視圖實驗室</span>
+                            </div>
+                            <button onclick="window.app.toggleModalGlassBox()" id="modalGlassBtn" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] text-sky-300 font-bold transition">
+                                📦 透明投影箱
+                            </button>
+                        </div>
+
+                        <!-- 5 Big Touch-Friendly View Switch Buttons -->
+                        <div class="grid grid-cols-5 gap-1">
+                            <button onclick="window.app.snapModalCamera('iso')" id="mCam-iso" class="py-1.5 px-1 rounded-xl text-[11px] md:text-xs font-black bg-sky-500 text-slate-950 shadow transition flex flex-col sm:flex-row items-center justify-center gap-1">
+                                <span>🧊</span><span>3D立體</span>
+                            </button>
+                            <button onclick="window.app.snapModalCamera('front')" id="mCam-front" class="py-1.5 px-1 rounded-xl text-[11px] md:text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 transition flex flex-col sm:flex-row items-center justify-center gap-1">
+                                <span class="w-2.5 h-2.5 rounded-xs bg-[#22c55e] inline-block"></span><span>前視(V)</span>
+                            </button>
+                            <button onclick="window.app.snapModalCamera('top')" id="mCam-top" class="py-1.5 px-1 rounded-xl text-[11px] md:text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 transition flex flex-col sm:flex-row items-center justify-center gap-1">
+                                <span class="w-2.5 h-2.5 rounded-xs bg-[#eab308] inline-block"></span><span>俯視(H)</span>
+                            </button>
+                            <button onclick="window.app.snapModalCamera('right')" id="mCam-right" class="py-1.5 px-1 rounded-xl text-[11px] md:text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 transition flex flex-col sm:flex-row items-center justify-center gap-1">
+                                <span class="w-2.5 h-2.5 rounded-xs bg-[#ef4444] inline-block"></span><span>右側(P)</span>
+                            </button>
+                            <button onclick="window.app.snapModalCamera('quad')" id="mCam-quad" class="py-1.5 px-1 rounded-xl text-[11px] md:text-xs font-bold bg-indigo-950 hover:bg-indigo-800 text-indigo-200 border border-indigo-400/40 transition flex flex-col sm:flex-row items-center justify-center gap-1" title="同時顯示俯視圖、前視圖、右側視圖與3D等角圖">
+                                <span>📐</span><span>三視圖同框</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Secondary 3D Canvas (Guaranteed 270px height on mobile, 350px on desktop) -->
+                    <div id="modalThreeContainer" class="relative w-full bg-slate-950 cursor-grab active:cursor-grabbing select-none overflow-hidden shrink-0">
+                        <!-- Top Helper Pill -->
+                        <div id="modalSingleOverlay" class="absolute top-2 left-2 right-2 pointer-events-none flex items-center justify-between gap-2 z-10">
+                            <span class="bg-slate-900/85 px-2.5 py-1 rounded-lg border border-slate-700 text-[10px] md:text-[11px] text-slate-300">
+                                👆 手機單指滑動／電腦拖曳可 360° 旋轉｜點上方按鈕壓平為三視圖
+                            </span>
+                        </div>
+
+                        <!-- 4-Quadrant L-Layout Overlay (Visible when in 'quad' 3-View Mode) -->
+                        <div id="modalQuadOverlay" class="hidden absolute inset-0 pointer-events-none z-10">
+                            <!-- Crosshairs dividing 4 quadrants -->
+                            <div class="absolute inset-x-0 top-1/2 h-[1.5px] bg-sky-500/40"></div>
+                            <div class="absolute inset-y-0 left-1/2 w-[1.5px] bg-sky-500/40"></div>
+                            <!-- Top-Left: Top View (H) -->
+                            <div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-yellow-500/20 border border-yellow-400/50 text-yellow-300 text-[10px] md:text-xs font-black">
+                                🟨 俯視圖 (H)｜寬×深
+                            </div>
+                            <!-- Top-Right: 3D Isometric + 45° Miter Hint -->
+                            <div class="absolute top-2 left-[52%] px-2 py-0.5 rounded bg-sky-500/20 border border-sky-400/50 text-sky-300 text-[10px] md:text-xs font-black">
+                                🧊 3D 立體圖（可觸控旋轉）
+                            </div>
+                            <!-- Bottom-Left: Front View (V) -->
+                            <div class="absolute top-[53%] left-2 px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 text-[10px] md:text-xs font-black">
+                                🟩 前視圖 (V)｜寬×高
+                            </div>
+                            <!-- Bottom-Right: Right Side View (P) -->
+                            <div class="absolute top-[53%] left-[52%] px-2 py-0.5 rounded bg-rose-500/20 border border-rose-400/50 text-rose-300 text-[10px] md:text-xs font-black">
+                                🟥 右側視圖 (P)｜深×高
+                            </div>
+                            <!-- Alignment Badges -->
+                            <div class="absolute top-[46%] left-3 text-[9px] text-sky-300 font-bold bg-slate-950/80 px-1.5 rounded">
+                                ↕ 長對正(同寬)
+                            </div>
+                            <div class="absolute bottom-2 left-[43%] text-[9px] text-sky-300 font-bold bg-slate-950/80 px-1.5 rounded">
+                                ↔ 高平齊(同高)
+                            </div>
+                        </div>
+
+                        <!-- Bottom Status Badge -->
+                        <div id="modalCamStatus" class="absolute bottom-2 left-2 right-2 pointer-events-none bg-slate-900/90 border border-sky-400/40 text-sky-200 px-2.5 py-1 rounded-lg text-[11px] md:text-xs font-bold z-10 truncate">
+                            目前視角：🧊 3D 等角立體視角（三軸互成 120°）
+                        </div>
+                    </div>
+
+                    <!-- Observation Hint Footer -->
+                    <div class="p-2.5 md:p-3 bg-slate-900/90 rounded-b-2xl border-t border-slate-800 text-xs text-slate-200 leading-relaxed shrink-0" id="qModalHint">
+                        💡 觀察重點載入中...
+                    </div>
+                </div>
+
+                <!-- RIGHT (5 Cols): Question Stem, Options & Explanation -->
+                <div class="lg:col-span-5 flex flex-col justify-between bg-slate-950/60 border border-slate-800 rounded-2xl p-3.5 md:p-5 shrink-0">
+                    <div>
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <span id="qModalCodeBadge" class="px-2.5 py-0.5 rounded-full text-xs font-black bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                                地標 1-1
+                            </span>
+                            <span id="qModalSolvedBadge" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-400">
+                                尚未作答
+                            </span>
+                        </div>
+
+                        <h4 id="qModalStem" class="text-xs sm:text-sm md:text-base font-bold text-white leading-relaxed mb-3">
+                            題目載入中...
+                        </h4>
+
+                        <!-- Optional 2D SVG Diagram -->
+                        <div id="qModalSvg" class="mb-3 empty:hidden bg-slate-900 border border-slate-800 rounded-xl p-2 flex justify-center"></div>
+
+                        <!-- 4 Options -->
+                        <div id="qModalOptions" class="space-y-2"></div>
+
+                        <!-- Feedback Explanation Box -->
+                        <div id="qModalFeedback" class="hidden mt-3 p-3 rounded-xl border text-xs md:text-sm leading-relaxed"></div>
+                    </div>
+
+                    <!-- Modal Bottom Navigation -->
+                    <div class="pt-3.5 mt-3.5 border-t border-slate-800 flex items-center justify-between gap-2">
+                        <button onclick="window.app.stepModalQuestion(-1)" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition">
+                            <i class="fa-solid fa-arrow-left mr-1"></i>上一座鑄件
+                        </button>
+                        <button onclick="window.app.closeQuestionModal()" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition">
+                            返回島嶼
+                        </button>
+                        <button onclick="window.app.stepModalQuestion(1)" class="px-3.5 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-xs shadow-lg transition">
+                            下一座鑄件<i class="fa-solid fa-arrow-right ml-1"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= 6. MODAL B: SOAPBOX NPC EASTER EGG (肥皂箱島長秘笈) ================= -->
+    <div id="npcModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border-2 border-amber-400 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative">
+            <button onclick="window.app.closeNpcModal()" class="absolute top-4 right-4 w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            <div class="flex items-center gap-4 mb-4">
+                <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-600 flex items-center justify-center text-4xl shadow-lg shrink-0">
+                    🧑‍🏫
+                </div>
+                <div>
+                    <span class="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                        🎉 觸發肥皂箱彩蛋！
+                    </span>
+                    <h3 class="text-xl font-black text-white mt-1">野生「捲髮眼鏡製圖島長」開講啦！</h3>
+                </div>
+            </div>
+            <div class="bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs md:text-sm text-slate-200 space-y-2.5 leading-relaxed">
+                <p class="font-bold text-amber-300">📢 島長站在肥皂箱上大聲疾呼「第五章正投影必勝口訣」：</p>
+                <ul class="space-y-1.5 list-disc list-inside text-slate-300">
+                    <li><strong class="text-emerald-400">正垂面（綠/黃/紅）</strong>：平行於一投影面、垂直於另兩面 ➔ <span class="text-white font-bold">「一實形、兩邊視（一框兩線）」</span>！</li>
+                    <li><strong class="text-sky-400">單斜面（藍色）</strong>：垂直於一投影面、傾斜於另兩面 ➔ <span class="text-white font-bold">「一邊視（斜線）、兩縮小（面積）」</span>！</li>
+                    <li><strong class="text-orange-400">複斜面（橘色）</strong>：與三個主要投影面都傾斜 ➔ <span class="text-white font-bold">「三視圖皆為相似縮小多邊形（三縮小）」</span>！</li>
+                    <li><strong class="text-amber-300">線條重疊優先順序</strong>：<span class="text-white font-bold">粗實線 ＞ 虛線（隱藏線）＞ 中心線</span>！</li>
+                    <li><strong class="text-rose-300">鑄造丙檢關鍵註解</strong>：<span class="text-white font-bold">未註明拔模斜度 1.5°、未註明圓角 R3</span>！</li>
+                </ul>
+            </div>
+            <div class="mt-5 flex justify-end gap-2">
+                <button onclick="window.app.jumpToNextUnsolved()" class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-300 hover:to-orange-400 text-slate-950 font-black text-xs md:text-sm shadow-lg">
+                    🚀 帶我去下一座未完成的鑄件地標！
+                </button>
+                <button onclick="window.app.closeNpcModal()" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs md:text-sm">
+                    收到！
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= 7. MODAL C: AVATAR & STUDENT PROFILE CUSTOMIZER (紙娃娃系統) ================= -->
+    <div id="avatarModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-xl w-full p-6 shadow-2xl">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-black text-white flex items-center gap-2">
+                    <i class="fa-solid fa-id-badge text-sky-400"></i>
+                    <span>學生資料與紙娃娃角色造型設定</span>
+                </h3>
+                <button onclick="window.app.closeAvatarModal()" class="text-slate-400 hover:text-white text-lg">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
+                <!-- Left: Live Paper-Doll Canvas Preview -->
+                <div class="md:col-span-5 flex flex-col items-center bg-slate-950 border border-slate-800 rounded-2xl p-4">
+                    <canvas id="avatarPreviewCanvas" width="220" height="220" class="w-40 h-40 rounded-2xl bg-slate-900 border border-slate-700 shadow-inner"></canvas>
+                    <span class="text-[11px] text-slate-400 mt-2">打卡合照與證書專屬角色</span>
+                </div>
+
+                <!-- Right: Form Controls -->
+                <div class="md:col-span-7 space-y-3 text-xs">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block font-bold text-slate-300 mb-1">班級</label>
+                            <input id="inpClass" type="text" value="鑄造一甲" class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-600 text-white font-bold">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-300 mb-1">座號</label>
+                            <input id="inpSeat" type="text" value="01" class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-600 text-white font-bold">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-300 mb-1">姓名（將印製於結業證書）</label>
+                        <input id="inpName" type="text" value="王小明" class="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-600 text-white font-bold">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block font-bold text-slate-300 mb-1">頭飾／髮型</label>
+                            <select id="inpHair" onchange="window.app.renderAvatarPreview()" class="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-600 text-white font-bold">
+                                <option value="curly">招牌蓬鬆捲髮</option>
+                                <option value="helmet">鑄造工程安全帽</option>
+                                <option value="cap">製圖熱血鴨舌帽</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-300 mb-1">眼鏡造型</label>
+                            <select id="inpGlasses" onchange="window.app.renderAvatarPreview()" class="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-600 text-white font-bold">
+                                <option value="round">知性圓框眼鏡</option>
+                                <option value="goggles">工場防飛濺護目鏡</option>
+                                <option value="square">俐落黑框眼鏡</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block font-bold text-slate-300 mb-1">工作服配色</label>
+                            <select id="inpColor" onchange="window.app.renderAvatarPreview()" class="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-600 text-white font-bold">
+                                <option value="#f97316">熔煉活力橘</option>
+                                <option value="#0ea5e9">藍圖科技藍</option>
+                                <option value="#10b981">正垂翡翠綠</option>
+                                <option value="#a855f7">極光皇家紫</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-300 mb-1">榮譽稱號</label>
+                            <select id="inpTitle" onchange="window.app.renderAvatarPreview()" class="w-full px-2.5 py-2 rounded-xl bg-slate-800 border border-slate-600 text-white font-bold">
+                                <option value="正投影探險家">正投影探險家</option>
+                                <option value="丙檢木模達人">丙檢木模達人</option>
+                                <option value="三視圖透視王">三視圖透視王</option>
+                                <option value="鑄造製圖宗師">鑄造製圖宗師</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-5 flex justify-end gap-2">
+                <button onclick="window.app.saveAvatarProfile()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-black text-sm shadow-lg">
+                    儲存設定並更新角色
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= 8. MODAL D: ISLAND PHOTO SNAPSHOT (政策島打卡合照) ================= -->
+    <div id="photoModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-3xl w-full p-5 shadow-2xl my-auto flex flex-col items-center">
+            <div class="w-full flex items-center justify-between mb-3">
+                <h3 class="text-lg font-black text-white flex items-center gap-2">
+                    <i class="fa-solid fa-camera-retro text-sky-400"></i>
+                    <span>鑄造製圖政策島｜3D 登島紀念打卡照</span>
+                </h3>
+                <button onclick="window.app.closePhotoModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="w-full rounded-2xl overflow-hidden border-2 border-slate-700 shadow-xl bg-slate-950">
+                <canvas id="photoSnapCanvas" width="960" height="580" class="w-full h-auto block"></canvas>
+            </div>
+            <div class="mt-4 flex flex-wrap items-center justify-end gap-2 w-full">
+                <button onclick="window.app.downloadPhotoPNG()" class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs md:text-sm shadow-lg flex items-center gap-1.5">
+                    <i class="fa-solid fa-download"></i>
+                    <span>下載紀念打卡照 (.PNG)</span>
+                </button>
+                <button onclick="window.app.closePhotoModal()" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs md:text-sm">
+                    關閉
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= 9. MODAL E: WEEKLY SCHEDULE (週規劃表｜六島三十題清單) ================= -->
+    <div id="scheduleModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-4xl w-full max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 md:p-5 bg-slate-800/90 border-b border-slate-700 flex items-center justify-between">
+                <div>
+                    <span class="text-xs font-bold text-indigo-400">E-GAME 六島三十題・週規劃表闖關進度</span>
+                    <h3 class="text-lg md:text-xl font-black text-white">📅 華興版第五章《正投影》六週闖關島地圖指南</h3>
+                </div>
+                <button onclick="window.app.closeScheduleModal()" class="w-8 h-8 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div id="scheduleModalBody" class="p-4 md:p-5 overflow-y-auto space-y-3"></div>
+        </div>
+    </div>
+
+    <!-- ================= 10. MODAL F: COMPLETION CERTIFICATE (六島三十題過關證書) ================= -->
+    <div id="certificateModal" class="hidden fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+        <div class="max-w-4xl w-full my-auto flex flex-col items-center">
+            <div class="no-print w-full flex flex-wrap items-center justify-between gap-2 mb-3 bg-slate-900 border border-slate-700 px-4 py-3 rounded-2xl shadow-xl">
+                <div id="certStatusBanner" class="text-xs md:text-sm font-bold text-amber-300 flex items-center gap-2">
+                    <i class="fa-solid fa-circle-info"></i>
+                    <span>完成六島三十題即可正式核發無浮水印結業證書！</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="window.app.downloadCertificatePNG()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs md:text-sm shadow flex items-center gap-1.5">
+                        <i class="fa-solid fa-download"></i>
+                        <span>下載證書圖檔 (.PNG)</span>
+                    </button>
+                    <button onclick="window.print()" class="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs md:text-sm shadow flex items-center gap-1.5">
+                        <i class="fa-solid fa-print"></i>
+                        <span>列印 / 另存 PDF</span>
+                    </button>
+                    <button onclick="window.app.closeCertificateModal()" class="px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-xs md:text-sm">
+                        關閉
+                    </button>
+                </div>
+            </div>
+            <div class="w-full bg-white rounded-2xl shadow-2xl overflow-hidden border-4 border-amber-400">
+                <canvas id="certCanvas" width="1200" height="850" class="w-full h-auto block"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= APPLICATION MODULE SCRIPT ================= -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // =========================================================================
+        // 1. SIX HEXAGONAL ISLANDS & 30 QUESTIONS DATA (每島 5 座專屬 3D 鑄件模型)
+        // =========================================================================
+        const ISLANDS_DATA = [
+            {
+                id: 1,
+                week: "第 1 週",
+                name: "第一島：正投影原理島",
+                shortName: "正投影原理",
+                subtitle: "5-1 ~ 5-3 平行投影、三特性與第三角法",
+                badge: "投影先鋒徽章",
+                hexPos: { x: -38, z: -22 },
+                topColor: 0x10b981,
+                rimColor: 0x059669,
+                questions: [
+                    {
+                        id: "1-1", qNum: 1, title: "平行投影與正投影", modelType: "basicBox",
+                        keywords: "平行投影 透視投影 視點 無窮遠 垂直 90度",
+                        hint: "課本 5-2 & 5-3：正投影法假設視點在無窮遠處，投射線彼此平行且垂直於投影面。可點擊上方「📐 三視圖同框」觀察標準三視圖！",
+                        stem: "【5-3 正投影原理】在機械與鑄造工程製圖中，為了使圖樣能準確表達木模與鑄件的真實形狀與大小，觀察者自無窮遠處觀察物體，此時所有的「投射線」彼此有何關係？且與投影面呈幾度夾角？",
+                        options: [
+                            "投射線集中於單一視點，且與投影面呈 45°",
+                            "投射線彼此平行，且與投影面成垂直（90°）",
+                            "投射線彼此平行，但與投影面成 60° 斜交",
+                            "投射線呈放射狀散開，物體越遠投影越大"
+                        ],
+                        ans: 1,
+                        exp: "正確！課本圖 5-1 與 5-3：正投影屬於平行投影法，視點在無窮遠處，故「投射線彼此平行且垂直（90°）於投影面」。"
+                    },
+                    {
+                        id: "1-2", qNum: 2, title: "正投影的真實性", modelType: "tBlock",
+                        keywords: "真實性 平行 實長 真實形狀",
+                        hint: "請點擊上方「🟩 前視(V)」，觀察與直立投影面平行的綠色 T 字形表面！",
+                        stem: "【5-3 正投影三特性】當物體上的直線或平面與投影面「平行」時，其投影會反映出直線的真實長度或平面的真實形狀（課本圖 5-4），此特性稱為？",
+                        options: [
+                            "真實性（True Size / True Length）",
+                            "集聚性（Accumulation）",
+                            "相似性（Similarity）",
+                            "透視性（Perspective）"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 6 頁圖 5-4：當直線或平面與投影面平行時，投影反映實長或真實形狀，稱為正投影的「真實性」。"
+                    },
+                    {
+                        id: "1-3", qNum: 3, title: "正投影的集聚性", modelType: "slantedBlock",
+                        keywords: "集聚性 垂直 端視圖 邊視圖 一點 一直線",
+                        hint: "請點擊「🟥 右側(P)」或「📐 三視圖同框」，看看藍色的單斜面在右側視圖集聚成了什麼！",
+                        stem: "【5-3 正投影三特性】當物體的直線或平面與投影面「垂直」時，直線的投影會集聚成一點（端視圖），而平面的投影則會集聚成一直線，稱為此平面的什麼視圖？（課本圖 5-5）",
+                        options: [
+                            "剖面視圖（Section View）",
+                            "邊視圖（Edge View）",
+                            "輔助視圖（Auxiliary View）",
+                            "展開視圖（Development View）"
+                        ],
+                        ans: 1,
+                        exp: "正確！課本第 7 頁圖 5-5「正投影的集聚性」：直線垂直於投影面集聚成一點稱為「端視圖」；平面垂直於投影面集聚成一直線稱為「邊視圖」。"
+                    },
+                    {
+                        id: "1-4", qNum: 4, title: "正投影的相似性", modelType: "obliqueBlock",
+                        keywords: "相似性 傾斜 縮短 縮小 多邊形",
+                        hint: "觀察模型中與三投影面傾斜的「橘色三角形面」，切換前視、俯視、右側視或三視圖同框比較面積變化。",
+                        stem: "【5-3 正投影三特性】當物體的直線或平面與投影面呈「傾斜（既不平行也不垂直）」時，直線的投影長度會縮短、平面的投影面積會縮小，但頂點數與幾何形狀仍與原來相似（課本圖 5-6），此特性稱為？",
+                        options: [
+                            "集聚性",
+                            "真實性",
+                            "相似性",
+                            "對稱性"
+                        ],
+                        ans: 2,
+                        exp: "正確！課本第 8 頁圖 5-6：當直線或平面與投影面傾斜時，投影縮短或縮小，但形狀與原形狀具有「相似性」（例如三角形投影後仍是三角形）。"
+                    },
+                    {
+                        id: "1-5", qNum: 5, title: "第三角法與CNS符號", modelType: "steppedBlock",
+                        keywords: "第三角法 第一角法 象限 投影箱 符號",
+                        hint: "課本圖 5-7 & 5-8：點擊「📐 三視圖同框」即可體驗第三角法「俯視圖在上、前視圖在下、右側視圖在右」的 L 型排列！",
+                        stem: "【5-3 第三角法與符號】我國國家標準（CNS）及鑄造丙級檢定試題皆採用「第三角法」。請問在第三角法中，觀察者視點、投影面與物體的順序為何？且第三角法符號中，圓錐台梯形的小端（h）應朝向哪裡？",
+                        svg: `<svg width="250" height="62" viewBox="0 0 250 62">
+                                <line x1="10" y1="31" x2="240" y2="31" stroke="#64748b" stroke-dasharray="5,3"/>
+                                <circle cx="50" cy="31" r="11" fill="none" stroke="#38bdf8" stroke-width="2.5"/>
+                                <circle cx="50" cy="31" r="22" fill="none" stroke="#38bdf8" stroke-width="2.5"/>
+                                <polygon points="105,20 165,9 165,53 105,42" fill="none" stroke="#f59e0b" stroke-width="2.5"/>
+                                <text x="175" y="35" fill="#f8fafc" font-size="11" font-weight="bold">第三角法符號</text>
+                              </svg>`,
+                        options: [
+                            "視點 → 投影面 → 物體；圓錐台梯形的小端（h）靠近左側的同心圓",
+                            "視點 → 物體 → 投影面；圓錐台梯形的大端（2h）靠近左側的同心圓",
+                            "物體 → 視點 → 投影面；只畫兩個同心圓",
+                            "投影面 → 視點 → 物體；只畫一個正方形"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本圖 5-7 與 5-8(b)：第三象限（第三角法）為「視點 → 投影面 → 物體」，符號中同心圓在左、梯形小端（h）朝左對齊同心圓。"
+                    }
+                ]
+            },
+            {
+                id: 2,
+                week: "第 2 週",
+                name: "第二島：正垂線與正垂面島",
+                shortName: "正垂線與面",
+                subtitle: "5-4 正投影多視圖、正垂線與正垂面",
+                badge: "正垂空間大師",
+                hexPos: { x: 0, z: -40 },
+                topColor: 0x0ea5e9,
+                rimColor: 0x0284c7,
+                questions: [
+                    {
+                        id: "2-1", qNum: 6, title: "正垂線(垂直V面)", modelType: "steppedBlock",
+                        keywords: "正垂線 直立投影面 端視圖 一點 實長",
+                        hint: "觀察階梯塊中沿前後方向（Z軸）的邊線，點擊「🟩 前視(V)」看看它變成什麼！",
+                        stem: "【5-4-1 正垂線】凡與三個主要投影面之一垂直，且與另外兩投影面平行的直線稱為「正垂線」（課本圖 5-15）。當木模上一條直線 AB 垂直於直立投影面（前視圖 V）時，它在前視圖、俯視圖、側視圖分別呈現什麼？",
+                        options: [
+                            "前視圖集聚為「一點（端視圖）」，俯視圖與側視圖皆顯示「實長直線」",
+                            "三個視圖中都集聚為一點",
+                            "前視圖為實長直線，俯視圖與側視圖集聚為一點",
+                            "三個視圖都是縮短的斜線"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 17 頁圖 5-15(a)(b)：垂直於直立投影面（V）的正垂線，在前視圖集聚成一點（端視圖），在俯視圖與側視圖則平行於投影面而顯示實長。"
+                    },
+                    {
+                        id: "2-2", qNum: 7, title: "正垂線(垂直H面)", modelType: "lBracketBlock",
+                        keywords: "正垂線 水平投影面 俯視圖 端視圖",
+                        hint: "觀察 L 型塊中垂直站立（Y 軸方向）的邊線，點擊「🟨 俯視(H)」觀察！",
+                        stem: "【5-4-1 正垂線】如課本圖 5-15(c)(d)，當物體上一條直立邊線 CD 與「水平投影面（俯視圖 H）」垂直時，請問在哪一個視圖中這條邊線會集聚成「一個點（端視圖）」？",
+                        options: [
+                            "前視圖",
+                            "俯視圖",
+                            "右側視圖",
+                            "左側視圖"
+                        ],
+                        ans: 1,
+                        exp: "正確！因為該直線與水平投影面（H）垂直，當我們從正上方往下看（俯視圖）時，整條鉛垂線會重疊集聚成一個點（端視圖）。"
+                    },
+                    {
+                        id: "2-3", qNum: 8, title: "正垂面與課本配色", modelType: "basicBox",
+                        keywords: "正垂面 一正兩線 邊視圖 綠 黃 紅 5-10-4",
+                        hint: "課本第 54 頁 5-10-4：前視正垂面塗綠色、俯視正垂面塗黃色、側視正垂面塗紅色。點擊「📐 三視圖同框」一目了然！",
+                        stem: "【5-4-1 & 5-10-4 正垂面辨別】凡與三主要投影面之一平行、而與另兩投影面垂直的平面稱為「正垂面」。關於正垂面在三視圖中的投影特性，下列敘述何者正確？",
+                        options: [
+                            "在平行於它的那個視圖顯示「真實形狀（面積）」，在另外兩個垂直的視圖則集聚成「一直線（邊視圖）」",
+                            "在三個視圖中都顯示相同的矩形面積",
+                            "在兩個視圖顯示面積，在一個視圖變成直線",
+                            "在三個視圖中都集聚成直線"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 22 頁圖 5-18：正垂面的黃金口訣是「一正（實形面積）、兩線（水平或垂直邊視圖）」。"
+                    },
+                    {
+                        id: "2-4", qNum: 9, title: "U型槽正垂面投影", modelType: "uGrooveBlock",
+                        keywords: "正垂面 水平投影面 俯視圖 實形 U型槽",
+                        hint: "請在 3D 視窗中觀察黃色頂面，切換「🟨 俯視(H)」與「🟩 前視(V)」比較。",
+                        stem: "【5-4-1 圖 5-18 實例】如模型所示，U 型槽頂部的「黃色平面」平行於水平投影面（H）。請問在「前視圖」與「右側視圖」中，這塊黃色頂面會如何呈現？",
+                        options: [
+                            "在前視圖與右側視圖的最上方，皆集聚成一條「水平粗實線（邊視圖）」",
+                            "在前視圖中畫成塗滿的矩形框",
+                            "在右側視圖中集聚成一個點",
+                            "在前視圖中變成一條 45° 斜線"
+                        ],
+                        ans: 0,
+                        exp: "正確！水平正垂面（黃色）在俯視圖呈現真實形狀面積，而在前視圖與側視圖的最頂端都集聚成一條水平直線（邊視圖）。"
+                    },
+                    {
+                        id: "2-5", qNum: 10, title: "三視圖空間維度對齊", modelType: "tBlock",
+                        keywords: "寬度 高度 深度 對齊 多視圖 5-4",
+                        hint: "點擊「📐 三視圖同框」，觀察左上俯視圖、左下前視圖、右下右側視圖之間的對齊關係！",
+                        stem: "【5-4 正投影多視圖】單一視圖只能表達兩個空間維度。當我們同時繪製「前視圖、俯視圖、右側視圖」並按第三角法 L 形排列對齊時，下列關於三視圖共同維度的配對何者正確？",
+                        options: [
+                            "前視與俯視同「寬度」；前視與側視同「高度」；俯視與側視同「深度」",
+                            "前視與俯視同「高度」；前視與側視同「寬度」",
+                            "三個視圖的長寬全部一樣大",
+                            "俯視圖只表示高度與寬度"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本 5-4 節口訣：「長對正（前俯同寬）、高平齊（前側同高）、寬相等（俯側同前後深度）」。"
+                    }
+                ]
+            },
+            {
+                id: 3,
+                week: "第 3 週",
+                name: "第三島：單斜與複斜魔王島",
+                shortName: "單斜與複斜",
+                subtitle: "5-4-1 & 5-10-4 單斜線(面)與複斜線(面)",
+                badge: "斜面征服者",
+                hexPos: { x: 38, z: -22 },
+                topColor: 0x6366f1,
+                rimColor: 0x4f46e5,
+                questions: [
+                    {
+                        id: "3-1", qNum: 11, title: "單斜線投影規律", modelType: "slantedBlock",
+                        keywords: "單斜線 前平線 水平線 側平線 實長 縮短",
+                        hint: "觀察模型中藍色斜面側邊的斜稜線，點擊「📐 三視圖同框」看看它在哪一個視圖是斜線實長！",
+                        stem: "【5-4-1 單斜線】凡與三主要投影面之一「平行」，而與另兩投影面「傾斜」的直線稱為「單斜線」（課本圖 5-16）。請問單斜線在三個主要視圖中的投影表現為何？",
+                        options: [
+                            "在平行的那個視圖顯示「實長（斜線）」，在另外兩個傾斜的視圖則顯示為「縮短的水平或垂直直線」",
+                            "在三個視圖中都是實長",
+                            "在一個視圖中集聚成一點，另兩個視圖為斜線",
+                            "在三個視圖中皆為縮短的斜線"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 19~20 頁圖 5-16：單斜線口訣為「一實長（斜線）、兩縮短（水平或垂直線）」。"
+                    },
+                    {
+                        id: "3-2", qNum: 12, title: "藍色單斜面投影", modelType: "vGrooveBlock",
+                        keywords: "單斜面 藍色 邊視圖 縮小平面 一線兩縮",
+                        hint: "請點擊「🟩 前視(V)」、「🟨 俯視(H)」、「🟥 右側(P)」或「📐 三視圖同框」，觀察 V 型槽兩側藍色單斜面！",
+                        stem: "【5-4-1 單斜面】課本將「單斜面」塗為藍色（與三主要投影面之一垂直，而與另兩投影面傾斜，圖 5-19）。請操作 3D 實驗室並判斷：藍色單斜面在三視圖中的投影規律為何？",
+                        options: [
+                            "在與它垂直的那個視圖集聚成「一條斜線（邊視圖）」，而在另外兩個傾斜的視圖中皆顯示為「縮小的相似平面」",
+                            "在三個視圖中都顯示藍色矩形面積",
+                            "在兩個視圖中集聚成直線，只在一個視圖顯示面積",
+                            "在三個視圖中都集聚成直線"
+                        ],
+                        ans: 0,
+                        exp: "正確！這是突破單斜面最重要的口訣：「一線（斜向邊視圖）、兩縮（兩個視圖出現縮小面積）」！"
+                    },
+                    {
+                        id: "3-3", qNum: 13, title: "複斜線投影規律", modelType: "obliqueBlock",
+                        keywords: "複斜線 三主要投影面傾斜 縮短",
+                        hint: "觀察模型中橘色三角形的三條邊線，點擊「📐 三視圖同框」看看它們在每個視圖的模樣。",
+                        stem: "【5-4-1 複斜線】凡與三個主要投影面（V、H、P）均傾斜的直線稱為「複斜線」（課本圖 5-17）。請問複斜線在三個主要視圖中的投影特性為何？",
+                        options: [
+                            "在前視圖顯示實長，俯視與側視縮短",
+                            "在三個主要投影面的投影「均為縮短的斜線」，無法直接從三視圖量取實長",
+                            "在俯視圖集聚成一點",
+                            "在側視圖變成水平線"
+                        ],
+                        ans: 1,
+                        exp: "正確！課本第 21 頁圖 5-17：複斜線因為對三個投影面都傾斜，所以在三視圖中「全部都是縮短的斜線」。"
+                    },
+                    {
+                        id: "3-4", qNum: 14, title: "橘色複斜面投影", modelType: "doubleObliqueBlock",
+                        keywords: "複斜面 橘色 三主要投影面傾斜 相似縮小平面",
+                        hint: "請點擊前視、俯視、右側視或「📐 三視圖同框」，觀察「橘色複斜面」在三個視圖是否都看得到！",
+                        stem: "【5-4-1 複斜面】課本將「複斜面」塗為橘色（與三主要投影面均傾斜，圖 5-20）。請問橘色複斜面在三個主要視圖中的投影表現為何？",
+                        options: [
+                            "在三個主要視圖中，均顯示為「相似的縮小多邊形平面（三個視圖都看得到橘色面積）」，沒有任何邊視圖",
+                            "在一個視圖變成斜線，另兩個視圖為三角形",
+                            "在兩個視圖變成直線，一個視圖為三角形",
+                            "在三個視圖中都變成斜線"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 26 頁圖 5-20：複斜面的口訣是「三面皆縮（三個視圖都是頂點數相同的縮小多邊形）」，絕不會集聚成一條線！"
+                    },
+                    {
+                        id: "3-5", qNum: 15, title: "課本圖5-46綜合辨識", modelType: "textbook546",
+                        keywords: "圖5-46 識圖練習 單斜面B 複斜面D 邊視圖",
+                        hint: "此模型即為課本第 55 頁「圖 5-46(a)」實體！請點擊「🟩 前視(V)」與「📐 三視圖同框」觀察右上角藍色 B 面與右下角橘色 D 面。",
+                        stem: "【5-10-4 課本圖 5-46(a) 實戰】請觀察還原自課本第 55 頁圖 5-46(a) 的模型：右上方為「藍色面 B」，右下方缺角為「橘色面 D」。請問在「前視圖」中，B 面與 D 面分別呈現什麼？",
+                        options: [
+                            "藍色單斜面 B 在前視圖集聚成「右上角一條斜線（邊視圖）」；橘色複斜面 D 在前視圖呈現「右下角縮小三角形面積」",
+                            "B 面與 D 面在前視圖都是矩形面積",
+                            "藍色 B 面在前視圖是三角形，橘色 D 面集聚成一條線",
+                            "B 面與 D 面在前視圖都看不見"
+                        ],
+                        ans: 0,
+                        exp: "太棒了！對照課本第 55 頁表格：藍色單斜面 B 在前視圖為「邊視圖（斜線）」、在俯視與側視為單斜面面積；而橘色複斜面 D 在前視、俯視、右側視三個視圖中全部都是三角形面積！"
+                    }
+                ]
+            },
+            {
+                id: 4,
+                week: "第 4 週",
+                name: "第四島：線條意義與相切島",
+                shortName: "線條與相切",
+                subtitle: "5-5 ~ 5-9 線條優先次序、圓角與相切相交",
+                badge: "標準製圖師",
+                hexPos: { x: -38, z: 22 },
+                topColor: 0xf59e0b,
+                rimColor: 0xd97706,
+                questions: [
+                    {
+                        id: "4-1", qNum: 16, title: "視圖中線條的3種意義", modelType: "cylinderTangent",
+                        keywords: "線條的意義 邊視 交線 極限線 5-5",
+                        hint: "課本第 27 頁圖 5-21：視圖上每一條實線或虛線，在 3D 空間中都有明確的幾何意義。",
+                        stem: "【5-5 視圖中線條的意義】在正投影視圖中，圖面上的一條線條（包含直線或曲線）在立體空間中可能代表哪三種意義？（課本圖 5-21）",
+                        options: [
+                            "平面的「邊視（Edge View）」、兩面相交的「交線（Intersection）」、以及曲面最外緣的「極限線（Maximum Contour）」",
+                            "尺寸線、延伸線、中心線",
+                            "粗線、中線、細線",
+                            "水平線、垂直線、45度線"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 27 頁圖 5-21 指出：正投影視圖中的線條代表 (1) 面之邊視、(2) 兩面之交線、(3) 圓柱或球面等曲面之極限線。"
+                    },
+                    {
+                        id: "4-2", qNum: 17, title: "線條重疊之優先次序", modelType: "uGrooveBlock",
+                        keywords: "線條重疊 優先次序 粗實線 隱藏線 虛線 中心線 5-6",
+                        hint: "課本第 28 頁圖 5-22：當不同種類的線條在同一投影位置重疊時，以粗者與重要者為優先。",
+                        stem: "【5-6 線條重疊之優先次序】繪製三視圖時，若物體的「可見輪廓線（粗實線）」、「隱藏線（虛線）」與「中心線（細鏈線）」剛好在同一個位置重疊，請問繪製的優先順序為何？",
+                        options: [
+                            "中心線 ＞ 粗實線 ＞ 隱藏線",
+                            "粗實線（可見輪廓線）＞ 隱藏線（虛線）＞ 中心線",
+                            "隱藏線（虛線）＞ 粗實線 ＞ 中心線",
+                            "把虛線畫在粗實線旁邊錯開"
+                        ],
+                        ans: 1,
+                        exp: "正確！課本第 28 頁：線條重疊優先順序為「1. 粗實線（可見輪廓線） ➔ 2. 隱藏線（虛線） ➔ 3. 中心線、剖面線、假想線」。口訣：「實 ＞ 虛 ＞ 中」。"
+                    },
+                    {
+                        id: "4-3", qNum: 18, title: "視圖之選擇與排列原則", modelType: "lBracketBlock",
+                        keywords: "視圖選擇 前視圖 虛線最少 L字形 5-7",
+                        hint: "課本第 30~34 頁（圖 5-24 ~ 5-30）：點擊「📐 三視圖同框」觀察 L 型塊最能表現特徵的前視方向！",
+                        stem: "【5-7 視圖之選擇與排列】關於工程圖中視圖的選擇與排列，下列哪一項做法最符合課本規範？",
+                        options: [
+                            "選擇「最能表現物體形狀特徵」之視圖作為前視圖；若左右側視圖皆能表達，應優先選擇「虛線最少」的那一側",
+                            "不論零件多簡單，一律要畫滿六個視圖",
+                            "可將前視圖、俯視圖、右側視圖排成同一條水平直線",
+                            "優先選擇虛線最多的方向當作前視圖"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本 5-7 節強調：(1) 選最能表現特徵的方向為前視圖、(2) 選虛線最少的視圖、(3) 視圖數量以足夠表達形狀為原則。"
+                    },
+                    {
+                        id: "4-4", qNum: 19, title: "共面、相切與相交界線", modelType: "cylinderTangent",
+                        keywords: "平齊 共面 相切 相交 界線 交線 5-10-3",
+                        hint: "觀察 3D 模型：左邊寬肋板與圓柱外緣平滑「相切」，右邊窄肋板則是直接插入圓柱「相交」。請切換「🟩 前視(V)」比較左右兩側！",
+                        stem: "【5-10-3 相鄰表面連接關係】如模型及課本圖 5-42~44 所示，當平面與圓柱曲面平滑連接形成「相切」時，以及平面直接插入圓柱形成「相交」時，在視圖上的交界處應如何繪製？",
+                        options: [
+                            "相切處「沒有界線」；相交處「有界線（必須畫出交線）」",
+                            "相切處要畫粗實線；相交處不畫線",
+                            "相切與相交都必須畫粗實線隔開",
+                            "相切與相交都不需要畫線"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 52~53 頁：兩表面平齊（共面）或平面與曲面「相切」時，表面平滑過渡無轉折，故「沒有界線」；若不平齊或「相交」時，則必須畫出「界線（交線）」。"
+                    },
+                    {
+                        id: "4-5", qNum: 20, title: "鑄件相切處1/8小圓角", modelType: "bearingBlock",
+                        keywords: "小圓角 1/8圓周 相切 圓柱 5-9",
+                        hint: "課本第 38~39 頁（圖 5-33 & 5-34）：觀察軸承座支撐板與圓筒相切處的特徵。",
+                        stem: "【5-9 物面相切處小圓角表示法】當鑄件的肋板平面與圓柱面相切且帶有內圓角 R 時（課本圖 5-33），由俯視圖切點投影下來，其直線終止端在切點處通常如何表示？",
+                        svg: `<svg width="240" height="65" viewBox="0 0 240 65">
+                                <line x1="20" y1="15" x2="95" y2="15" stroke="#f8fafc" stroke-width="2.5"/>
+                                <line x1="95" y1="15" x2="95" y2="55" stroke="#f8fafc" stroke-width="2.5"/>
+                                <line x1="20" y1="55" x2="180" y2="55" stroke="#f8fafc" stroke-width="2.5"/>
+                                <path d="M 72 32 Q 72 42 82 42 L 180 42" fill="none" stroke="#38bdf8" stroke-width="2.5"/>
+                                <text x="105" y="28" fill="#38bdf8" font-size="11" font-weight="bold">← 切點處繪 1/8 圓周小圓弧</text>
+                              </svg>`,
+                        options: [
+                            "在切點部分繪上小圓弧，弧長約為內圓角圓周長之「八分之一（1/8 圓周，即 45° 圓弧）」",
+                            "直接畫一條垂直直線到底",
+                            "畫一個完整的圓圈",
+                            "用虛線打叉表示"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 38 頁圖 5-33：當平面與圓柱面相切且有圓角時，其直線終止端在切點部分繪上小圓弧，弧長約為內圓周長之 1/8。"
+                    }
+                ]
+            },
+            {
+                id: 5,
+                week: "第 5 週",
+                name: "第五島：鑄造丙檢識圖島",
+                shortName: "鑄造丙檢識圖",
+                subtitle: "5-10 ~ 5-11 識圖方法與鑄造丙檢 301~306 試題",
+                badge: "丙檢識圖達人",
+                hexPos: { x: 0, z: 40 },
+                topColor: 0xf43f5e,
+                rimColor: 0xe11d48,
+                questions: [
+                    {
+                        id: "5-1", qNum: 21, title: "丙檢302組合模V型槽", modelType: "exam302",
+                        keywords: "丙檢 890302 組合模 V型槽 單斜面 虛線",
+                        hint: "此 3D 模型為「鑄造丙檢 01100-890302 組合模」鑄件！請切換「🟨 俯視(H)」、「🟩 前視(V)」與「📐 三視圖同框」觀察。",
+                        stem: "【鑄造丙檢 890302 試題識圖】請觀察 3D 視窗中的「丙檢第 2 題（890302）鑄件」。塊體左側有兩片藍色的 V 型缺口斜面，右側有一個方形缺口。當從側面觀察時（檢定圖第 19 頁左側視圖），V 型槽底部的尖角稜線與方槽底面在視圖中如何表示？",
+                        options: [
+                            "因為被外部本體遮蔽不可見，在側視圖中皆以「水平虛線（隱藏線）」繪製",
+                            "在側視圖中完全省略不畫",
+                            "在側視圖中畫成粗實線圓孔",
+                            "在側視圖中畫成交叉對角線"
+                        ],
+                        ans: 0,
+                        exp: "正確！對照鑄造丙檢 890302 鑄件圖：V 型缺口尖端與右側方槽底面均貫穿厚度（20mm），從側面看過去屬於內部被遮蔽的邊視圖與交線，故以「虛線」表示！"
+                    },
+                    {
+                        id: "5-2", qNum: 22, title: "丙檢306 T型管交線", modelType: "exam306",
+                        keywords: "丙檢 890306 T型管 分型模 相交線 砂心",
+                        hint: "此 3D 模型為「鑄造丙檢 01100-890306 T型管」！點擊「📐 三視圖同框」觀察直立支管與水平主管正交處。",
+                        stem: "【鑄造丙檢 890306 試題識圖】在「丙檢第 6 題（890306 分型模 T 型管，檢定資料第 27 頁）」的剖視圖中，水平管內孔（Ø36）與垂直支管內孔（Ø36）直徑相等且垂直正交，請問兩內孔相交處在圖面上呈現什麼形狀？",
+                        options: [
+                            "呈現兩條 45° 斜直線相交成 V 字形（等徑兩圓柱正交之相貫交線投影為直線）",
+                            "沒有任何交線",
+                            "呈現雙S形波浪曲線",
+                            "呈現正方形框"
+                        ],
+                        ans: 0,
+                        exp: "正確！根據投影幾何原理，當兩個直徑相同的圓柱（或圓孔 Ø36）成 90° 正交時，其相貫交線在前視剖面圖上會投影成對稱的 V 字形斜直線！"
+                    },
+                    {
+                        id: "5-3", qNum: 23, title: "丙檢305漸縮管與斜度", modelType: "exam305",
+                        keywords: "丙檢 890305 拔模斜度 1.5度 圓角 R3 註解",
+                        hint: "此 3D 模型為「鑄造丙檢 01100-890305 漸縮法蘭管」！請切換三視圖觀察圓錐漸縮管身與兩端異徑法蘭。",
+                        stem: "【鑄造丙檢藍圖規範】在鑄造丙級技術士技能檢定術科測試的鑄件圖與木模圖上，為了方便起模並防止砂模崩落，左下角「註解」欄統一規定「未註明拔模斜度」與「未註明圓角」分別為多少？",
+                        options: [
+                            "未註明拔模斜度為 1.5 度；未註明圓角為 R3",
+                            "未註明拔模斜度為 5 度；未註明圓角為 R10",
+                            "未註明拔模斜度為 0 度；不需圓角",
+                            "未註明拔模斜度為 30 度；未註明圓角為 R1"
+                        ],
+                        ans: 0,
+                        exp: "正確！鑄造丙檢應檢資料第 15、16、21、23、25 頁左下角均明確標註：「1. 未註明拔模斜度為 1.5 度；2. 未註明圓角為 R3」。"
+                    },
+                    {
+                        id: "5-4", qNum: 24, title: "疊加式軸承座與重量計算", modelType: "bearingBlock",
+                        keywords: "45度 深度投影 切割式 疊加式 重量計算 5-11",
+                        hint: "此 3D 模型為課本第 72 頁「圖 5-56 軸承座（疊加式組合體）」！點擊「📐 三視圖同框」觀察底板、圓筒與肋板組合。",
+                        stem: "【5-11 製圖要領＆丙檢重量計算】繪製三視圖時，我們常在右上角作一條「45° 斜線」將俯視圖的【前後深度 D】轉移到右側視圖。此外，課本將組合體分為「切割式（如墊塊）」與「疊加式（如軸承座）」，這對應到丙檢第一站「鑄件重量計算」的哪一個核心公式？",
+                        options: [
+                            "先將複雜鑄件拆解為基本幾何體（細部體積 V1、V2...），以疊加（+）或切割扣除（-）求出總體積 V = V1 ± V2，再乘以金屬密度 d（W = V × d）",
+                            "只量取鑄件的外框長寬高直接相乘",
+                            "用面積直接乘以密度",
+                            "不需繪製細部草圖，直接背誦答案"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本 5-10 與 5-11 的「切割法」與「疊加法」正是丙檢第一站「鑄件重量計算（佔 20%）」的核心：繪出細部簡圖 V1、V2，計算總體積 V = V1 ± V2 後乘上金屬密度 d 得出公克（g）！"
+                    },
+                    {
+                        id: "5-5", qNum: 25, title: "補足缺線：頂點編號法", modelType: "doubleObliqueBlock",
+                        keywords: "補足視圖 缺少線條 編號法 複斜面 5-10-4",
+                        hint: "課本第 63~65 頁（圖 5-51）：遇到同時有缺角與無缺角的複雜三視圖補線題時，切換「📐 三視圖同框」對照角頂位置最準確！",
+                        stem: "【5-10-4 補足視圖缺線要領】在課本第 64~65 頁圖 5-51 中，當三視圖缺少線條且含有斜面時，課本教我們用什麼方法來精準找出側視圖與俯視圖漏畫的斜線（如連接 2-5 與 3-5 形成複斜面 235）？",
+                        options: [
+                            "將立方體切除部位的各角頂「編號（1, 2, 3, 4, 5）」，並依投影對齊關係將編號移標於三視圖上，藉此判斷正垂面與複斜面的連線",
+                            "憑直覺隨便畫對角線",
+                            "全部用虛線連起來",
+                            "直接擦掉外框線"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 64~65 頁圖 5-51 展示的「角頂編號對照法」是解開高難度三視圖補線題與複斜面的終極武器！"
+                    }
+                ]
+            },
+            {
+                id: 6,
+                week: "第 6 週",
+                name: "第六島：立體正投影與等角島",
+                shortName: "等角立體圖",
+                subtitle: "5-12 等角軸、等角圖與圓孔四心橢圓法",
+                badge: "立體製圖宗師",
+                hexPos: { x: 38, z: 22 },
+                topColor: 0xa855f7,
+                rimColor: 0x9333ea,
+                questions: [
+                    {
+                        id: "6-1", qNum: 26, title: "立體正投影旋轉角度", modelType: "basicBox",
+                        keywords: "立體正投影 45度 35度16分 等角投影 5-12-1",
+                        hint: "課本第 78 頁（圖 5-60）：點擊「🧊 3D立體」觀察正方體的三個正垂面（綠、黃、紅）面積完全相等！",
+                        stem: "【5-12-1 立體正投影圖原理】設有一正方體置於水平面上，若先將物體繞直立軸（OY）旋轉 45°，再繞水平軸旋轉幾度，此時投射線垂直於投影面所得之正投影即成為「等角投影圖」？（課本圖 5-60）",
+                        options: [
+                            "旋轉 35°16'（使三主軸與投影面傾角皆相等）",
+                            "旋轉 90°",
+                            "旋轉 15°",
+                            "旋轉 60°"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 78 頁圖 5-60：先繞直立軸轉 45°，再繞水平軸轉「35°16'」，此時正方體三個正垂面與投影面的夾角完全相同，形成等角投影！"
+                    },
+                    {
+                        id: "6-2", qNum: 27, title: "等角軸120°與30°基線", modelType: "steppedBlock",
+                        keywords: "等角軸 120度 30度 等角線 5-12-1",
+                        hint: "請點擊「🧊 3D立體」按鈕，觀察三條座標軸在畫面上的 120° 夾角！",
+                        stem: "【5-12-1 等角軸與等角線】在繪製等角圖時，代表物體寬、高、深的三條基準軸（OX、OY、OZ）在平面圖紙上互成幾度夾角？換言之，左右兩條斜軸與水平線各夾幾度？（課本圖 5-59 ~ 5-62）",
+                        options: [
+                            "三軸互成 120° 夾角（左右兩軸與水平線各成 30°）",
+                            "三軸互成 90° 夾角",
+                            "左右兩軸與水平線各成 45°",
+                            "三軸互成 60° 夾角"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 77~80 頁：等角軸 OX、OY、OZ 在平面上互成「120° 夾角」，因此繪圖時使用 30° 三角板向左、向右各畫 30° 斜線及垂直線即可定出等角軸！"
+                    },
+                    {
+                        id: "6-3", qNum: 28, title: "等角投影圖vs等角圖", modelType: "uGrooveBlock",
+                        keywords: "等角投影圖 等角圖 81.6% 82/100 實長 5-12-1",
+                        hint: "課本第 79~80 頁（圖 5-61 & 5-62）：比較「82/100」與「100/100」兩種畫法的名稱差異！",
+                        stem: "【5-12-1 等角投影圖 vs 等角圖】在理論的「等角投影圖」中，等角軸上的線長約為實長的 81.6%（約 82/100）。但在實務繪圖時，我們為了方便常忽略此縮短率，直接按照物體「100% 實長」在等角軸上量度繪出，所得之立體圖稱為？（課本圖 5-61）",
+                        options: [
+                            "等角圖（Isometric Drawing，大小為 100/100）",
+                            "二等角圖",
+                            "等斜圖",
+                            "透視圖"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 79 頁圖 5-61 特別區分：按 81.6% 縮短繪製的稱為「等角投影圖」；忽略縮短率、直接用 100% 實長量度繪製的稱為「等角圖」！"
+                    },
+                    {
+                        id: "6-4", qNum: 29, title: "斜面非等角線的畫法", modelType: "slantedBlock",
+                        keywords: "非等角線 斜面 等角圖 端點 座標 5-12-3",
+                        hint: "課本第 81 頁（圖 5-63）：凡與等角軸不平行的直線稱為「非等角線」，不能直接拿尺量斜線長度！",
+                        stem: "【5-12-3 畫具有斜面物體的等角圖】當物體具有單斜面或複斜面時，其斜邊與等角軸不平行，稱為「非等角線」（課本圖 5-63）。請問在繪製等角圖時，非等角線應如何繪出？",
+                        options: [
+                            "先將物體畫成完整方箱形，沿著平行於等角軸的「等角線」量度X、Y距離定出斜線的兩端點（A、B點），再將兩端點連線",
+                            "直接用直尺量取三視圖上斜線的長度，照抄畫在等角圖上",
+                            "一律用 45° 三角板直接畫斜線",
+                            "用圓規畫弧線代替"
+                        ],
+                        ans: 0,
+                        exp: "正確！課本第 81 頁圖 5-63：因為非等角線的縮短率不同，絕對不能直接量取斜線長度！必須先沿等角軸（等角線）量出端點座標位置，再將端點連接。"
+                    },
+                    {
+                        id: "6-5", qNum: 30, title: "圓棒與圓孔四心橢圓法", modelType: "isoHoleBlock",
+                        keywords: "圓孔 圓棒 等角圖 橢圓 外切菱形 四心法 5-12-5 5-12-6",
+                        hint: "此 3D 模型為帶有貫穿圓孔的方塊（課本第 84~85 頁圖 5-66）！切換「🟩 前視(V)」與「🧊 3D立體」觀察正圓如何變成等角橢圓。",
+                        stem: "【5-12-5 & 5-12-6 圓與圓孔的等角圖】在等角圖中，正圓形的圓柱端面或圓孔會投影呈現為「橢圓」（課本圖 5-65、5-66）。請問課本教我們如何使用圓規與三角板在等角面上畫出這個近似橢圓？",
+                        svg: `<svg width="240" height="75" viewBox="0 0 240 75">
+                                <polygon points="75,8 135,38 75,68 15,38" fill="none" stroke="#38bdf8" stroke-width="1.8"/>
+                                <line x1="75" y1="8" x2="45" y2="53" stroke="#94a3b8" stroke-dasharray="3,2"/>
+                                <line x1="75" y1="8" x2="105" y2="53" stroke="#94a3b8" stroke-dasharray="3,2"/>
+                                <line x1="75" y1="68" x2="45" y2="23" stroke="#94a3b8" stroke-dasharray="3,2"/>
+                                <line x1="75" y1="68" x2="105" y2="23" stroke="#94a3b8" stroke-dasharray="3,2"/>
+                                <ellipse cx="75" cy="38" rx="39" ry="22" fill="none" stroke="#eab308" stroke-width="2.5"/>
+                                <text x="145" y="42" fill="#f8fafc" font-size="11" font-weight="bold">外切菱形＋中垂線四心法</text>
+                              </svg>`,
+                        options: [
+                            "先依圓孔直徑畫出等角「外切菱形」，並作每邊的中垂線，以中垂線相交之 4 個點與鈍角頂點為圓心，分四段畫弧合成近似橢圓；若有孔深 X，再向孔深方向平移畫出孔底露出之部分橢圓弧",
+                            "直接用圓規在中心畫一個正圓形",
+                            "畫一個正八邊形代替",
+                            "只畫兩條交叉中心線即可"
+                        ],
+                        ans: 0,
+                        exp: "恭喜完成第六島第 30 題！課本第 83~85 頁圖 5-65、5-66：先畫外切菱形，作各邊中垂線求得圓心畫出近似橢圓；並將圓弧向孔深方向平移孔深 X 距離，即可畫出孔底露出的那道立體弧線！"
+                    }
+                ]
+            }
+        ];
+
+        // Cross-Island Knowledge Collaboration Connections (HEART 政策島「協作線」)
+        const COLLAB_LINKS = [
+            { from: "1-3", to: "2-3", label: "集聚性 ➔ 正垂面邊視圖", color: 0x38bdf8 },
+            { from: "3-2", to: "5-1", label: "藍色單斜面 ➔ 丙檢302 V型槽", color: 0x60a5fa },
+            { from: "3-4", to: "5-5", label: "橘色複斜面 ➔ 頂點編號補線法", color: 0xf97316 },
+            { from: "4-4", to: "5-2", label: "相切與相交 ➔ 丙檢306 T型管交線", color: 0xf43f5e },
+            { from: "4-5", to: "5-3", label: "1/8相切圓弧 ➔ 丙檢R3圓角規範", color: 0xfacc15 },
+            { from: "3-1", to: "6-4", label: "單斜線 ➔ 等角圖非等角線座標法", color: 0xc084fc }
+        ];
+
+        // =========================================================================
+        // 2. PERSISTENT STATE (LOCAL STORAGE)
+        // =========================================================================
+        const STORAGE_KEY = "foundry_heart_island_v2";
+        let state = {
+            student: {
+                className: "鑄造一甲",
+                seatNo: "01",
+                name: "王小明",
+                hair: "curly",
+                glasses: "round",
+                color: "#f97316",
+                title: "正投影探險家"
+            },
+            solved: {},          // { "1-1": true, ... }
+            selectedOption: {},  // { "1-1": 1, ... }
+            islandDoneTime: {}   // { 1: "2026/10/29 08:30", ... }
+        };
+
+        function loadState() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    state = { ...state, ...parsed, student: { ...state.student, ...(parsed.student || {}) } };
+                }
+            } catch (e) { console.warn(e); }
+        }
+
+        function saveState() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            } catch (e) { console.warn(e); }
+            updateAllHUD();
+        }
+
+        function getIslandSolvedCount(islandId) {
+            const isl = ISLANDS_DATA.find(i => i.id === islandId);
+            return isl ? isl.questions.filter(q => state.solved[q.id]).length : 0;
+        }
+
+        function getTotalSolvedCount() {
+            return Object.keys(state.solved).length;
+        }
+
+        // =========================================================================
+        // 3. PROCEDURAL 3D GEOMETRY FACTORY (TEXTBOOK 5-10-4 COLORING)
+        // =========================================================================
+        function colorGeometryByNormals(geometry) {
+            const nonIndexed = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+            nonIndexed.computeVertexNormals();
+
+            const count = nonIndexed.attributes.position.count;
+            const colors = new Float32Array(count * 3);
+            const normals = nonIndexed.attributes.normal.array;
+
+            const cGreen  = new THREE.Color(0x22c55e); // Front Ortho (Z+)
+            const cYellow = new THREE.Color(0xeab308); // Top Ortho (Y+)
+            const cRed    = new THREE.Color(0xef4444); // Right Side Ortho (X+)
+            const cBlue   = new THREE.Color(0x3b82f6); // Inclined Face (單斜面)
+            const cOrange = new THREE.Color(0xf97316); // Oblique Face (複斜面)
+            const cGray   = new THREE.Color(0x64748b); // Back / Bottom / Left
+
+            for (let i = 0; i < count; i += 3) {
+                const nx = normals[i * 3];
+                const ny = normals[i * 3 + 1];
+                const nz = normals[i * 3 + 2];
+
+                const ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
+                let faceColor = cGray;
+
+                if (ny > 0.92) faceColor = cYellow;
+                else if (nz > 0.92) faceColor = cGreen;
+                else if (nx > 0.92) faceColor = cRed;
+                else if (nx < -0.92 || ny < -0.92 || nz < -0.92) faceColor = cGray;
+                else {
+                    const nonZeroAxes = (ax > 0.15 ? 1 : 0) + (ay > 0.15 ? 1 : 0) + (az > 0.15 ? 1 : 0);
+                    faceColor = (nonZeroAxes === 3) ? cOrange : cBlue;
+                }
+
+                for (let j = 0; j < 3; j++) {
+                    colors[(i + j) * 3]     = faceColor.r;
+                    colors[(i + j) * 3 + 1] = faceColor.g;
+                    colors[(i + j) * 3 + 2] = faceColor.b;
+                }
+            }
+            nonIndexed.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+            return nonIndexed;
+        }
+
+        function createColoredPartMesh(geometry, edgeColor = 0x0f172a) {
+            const coloredGeo = colorGeometryByNormals(geometry);
+            const mat = new THREE.MeshStandardMaterial({
+                vertexColors: true,
+                roughness: 0.45,
+                metalness: 0.1,
+                polygonOffset: true,
+                polygonOffsetFactor: 1,
+                polygonOffsetUnits: 1
+            });
+            const mesh = new THREE.Mesh(coloredGeo, mat);
+            const edges = new THREE.EdgesGeometry(coloredGeo, 22);
+            const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: edgeColor }));
+            mesh.add(line);
+            return mesh;
+        }
+
+        function createCastingModelGroup(modelType, scale = 1.0) {
+            const group = new THREE.Group();
+
+            if (modelType === "basicBox") {
+                const geo = new THREE.BoxGeometry(50, 40, 50);
+                group.add(createColoredPartMesh(geo));
+
+            } else if (modelType === "tBlock") {
+                const shape = new THREE.Shape();
+                shape.moveTo(-28, -22);
+                shape.lineTo(28, -22);
+                shape.lineTo(28, -6);
+                shape.lineTo(10, -6);
+                shape.lineTo(10, 22);
+                shape.lineTo(-10, 22);
+                shape.lineTo(-10, -6);
+                shape.lineTo(-28, -6);
+                shape.closePath();
+                const geo = new THREE.ExtrudeGeometry(shape, { depth: 46, bevelEnabled: false });
+                geo.translate(0, 0, -23);
+                group.add(createColoredPartMesh(geo));
+
+            } else if (modelType === "lBracketBlock") {
+                const shape = new THREE.Shape();
+                shape.moveTo(-26, -24);
+                shape.lineTo(26, -24);
+                shape.lineTo(26, -8);
+                shape.lineTo(-10, -8);
+                shape.lineTo(-10, 24);
+                shape.lineTo(-26, 24);
+                shape.closePath();
+                const geo = new THREE.ExtrudeGeometry(shape, { depth: 46, bevelEnabled: false });
+                geo.translate(0, 0, -23);
+                group.add(createColoredPartMesh(geo));
+
+            } else if (modelType === "vGrooveBlock") {
+                const shape = new THREE.Shape();
+                shape.moveTo(-28, -22);
+                shape.lineTo(28, -22);
+                shape.lineTo(28, 22);
+                shape.lineTo(14, 22);
+                shape.lineTo(0, 0);
+                shape.lineTo(-14, 22);
+                shape.lineTo(-28, 22);
+                shape.closePath();
+                const geo = new THREE.ExtrudeGeometry(shape, { depth: 48, bevelEnabled: false });
+                geo.translate(0, 0, -24);
+                group.add(createColoredPartMesh(geo));
+
+            } else if (modelType === "steppedBlock") {
+                const shape = new THREE.Shape();
+                shape.moveTo(-26, -22);
+                shape.lineTo(26, -22);
+                shape.lineTo(26, 0);
+                shape.lineTo(0, 0);
+                shape.lineTo(0, 22);
+                shape.lineTo(-26, 22);
+                shape.closePath();
+                const geo = new THREE.ExtrudeGeometry(shape, { depth: 48, bevelEnabled: false });
+                geo.translate(0, 0, -24);
+                group.add(createColoredPartMesh(geo));
+
+            } else if (modelType === "uGrooveBlock") {
+                const shape = new THREE.Shape();
+                shape.moveTo(-28, -22);
+                shape.lineTo(28, -22);
+                shape.lineTo(28, 22);
+                shape.lineTo(12, 22);
+                shape.lineTo(12, -4);
+                shape.lineTo(-12, -4);
+                shape.lineTo(-12, 22);
+                shape.lineTo(-28, 22);
+                shape.closePath();
+                const geo = new THREE.ExtrudeGeometry(shape, { depth: 48, bevelEnabled: false });
+                geo.translate(0, 0, -24);
+                group.add(createColoredPartMesh(geo));
+
+            } else if (modelType === "slantedBlock") {
+                const geo = new THREE.BufferGeometry();
+                const v = new Float32Array([
+                    -25, 24, -25, -25, 24, 0,   25, 24, 0,
+                    -25, 24, -25,  25, 24, 0,   25, 24, -25,
+                    -25, 24, 0,   -25, -8, 25,  25, -8, 25,
+                    -25, 24, 0,    25, -8, 25,  25, 24, 0,
+                    -25, -8, 25,  -25, -24, 25, 25, -24, 25,
+                    -25, -8, 25,   25, -24, 25, 25, -8, 25,
+                    25, -24, -25,  25, 24, -25, 25, 24, 0,
+                    25, -24, -25,  25, 24, 0,   25, -8, 25,
+                    25, -24, -25,  25, -8, 25,  25, -24, 25,
+                    -25, -24, -25, -25, 24, 0,  -25, 24, -25,
+                    -25, -24, -25, -25, -8, 25, -25, 24, 0,
+                    -25, -24, -25, -25, -24, 25, -25, -8, 25,
+                    -25, -24, -25, -25, 24, -25, 25, 24, -25,
+                    -25, -24, -25, 25, 24, -25,  25, -24, -25,
+                    -25, -24, 25, -25, -24, -25, 25, -24, -25,
+                    -25, -24, 25,  25, -24, -25, 25, -24, 25
+                ]);
+                geo.setAttribute("position", new THREE.BufferAttribute(v, 3));
+                group.add(createColoredPartMesh(geo));
+
+            } else if (modelType === "obliqueBlock" || modelType === "doubleObliqueBlock") {
+                const s = 25;
+                const cut = modelType === "doubleObliqueBlock" ? -14 : -6;
+                const geo = new THREE.BufferGeometry();
+                const v = new Float32Array([
+                    cut, s, s,   s, cut, s,   s, s, cut,
+                    -s, s, -s, -s, s, s,   cut, s, s,
+                    -s, s, -s, cut, s, s,    s, s, cut,
+                    -s, s, -s,  s, s, cut,   s, s, -s,
+                    -s, -s, s,  s, -s, s,   s, cut, s,
+                    -s, -s, s,  s, cut, s,  cut, s, s,
+                    -s, -s, s, cut, s, s,   -s, s, s,
+                    s, -s, s,   s, -s, -s,  s, s, -s,
+                    s, -s, s,   s, s, -s,   s, s, cut,
+                    s, -s, s,   s, s, cut,   s, cut, s,
+                    -s, -s, -s, -s, -s, s, -s, s, s,
+                    -s, -s, -s, -s, s, s,  -s, s, -s,
+                    s, -s, -s, -s, -s, -s, -s, s, -s,
+                    s, -s, -s, -s, s, -s,   s, s, -s,
+                    -s, -s, s, -s, -s, -s,  s, -s, -s,
+                    -s, -s, s,  s, -s, -s,  s, -s, s
+                ]);
+                geo.setAttribute("position", new THREE.BufferAttribute(v, 3));
+                group.add(createColoredPartMesh(geo));
+
+            } else if (modelType === "textbook546") {
+                const base = new THREE.BufferGeometry();
+                const bv = new Float32Array([
+                    0, 0, 26,   26, -22, 26,  26, 0, 0,
+                    -26, 0, -26, -26, 0, 26,  0, 0, 26,
+                    -26, 0, -26,  0, 0, 26,   26, 0, 0,
+                    -26, 0, -26,  26, 0, 0,   26, 0, -26,
+                    -26, -22, 26, 26, -22, 26, 0, 0, 26,
+                    -26, -22, 26, 0, 0, 26,   -26, 0, 26,
+                    26, -22, 26, 26, -22, -26, 26, 0, -26,
+                    26, -22, 26, 26, 0, -26,   26, 0, 0
+                ]);
+                base.setAttribute("position", new THREE.BufferAttribute(bv, 3));
+                group.add(createColoredPartMesh(base));
+
+                const shapeH = new THREE.Shape();
+                shapeH.moveTo(-26, 0);
+                shapeH.lineTo(26, 0);
+                shapeH.lineTo(26, 12);
+                shapeH.lineTo(8, 28);
+                shapeH.lineTo(-26, 28);
+                shapeH.closePath();
+                const upperGeo = new THREE.ExtrudeGeometry(shapeH, { depth: 20, bevelEnabled: false });
+                upperGeo.translate(0, 0, -26);
+                group.add(createColoredPartMesh(upperGeo));
+
+            } else if (modelType === "cylinderTangent") {
+                const cylGeo = new THREE.CylinderGeometry(18, 18, 46, 24);
+                group.add(createColoredPartMesh(cylGeo));
+                const leftTangent = new THREE.BoxGeometry(28, 22, 36);
+                leftTangent.translate(-18, -12, 0);
+                group.add(createColoredPartMesh(leftTangent));
+                const rightIntersect = new THREE.BoxGeometry(28, 22, 16);
+                rightIntersect.translate(18, -12, 0);
+                group.add(createColoredPartMesh(rightIntersect));
+
+            } else if (modelType === "bearingBlock") {
+                const base = new THREE.BoxGeometry(56, 12, 38);
+                base.translate(0, -18, 0);
+                group.add(createColoredPartMesh(base));
+                const cyl = new THREE.CylinderGeometry(15, 15, 38, 24);
+                cyl.rotateX(Math.PI / 2);
+                cyl.translate(0, 10, 0);
+                group.add(createColoredPartMesh(cyl));
+                const rib = new THREE.BoxGeometry(10, 26, 30);
+                rib.translate(0, -4, 0);
+                group.add(createColoredPartMesh(rib));
+
+            } else if (modelType === "exam302") {
+                const shape = new THREE.Shape();
+                shape.moveTo(-28, -28);
+                shape.lineTo(28, -28);
+                shape.lineTo(28, -11);
+                shape.lineTo(16, -11);
+                shape.lineTo(16, 11);
+                shape.lineTo(28, 11);
+                shape.lineTo(28, 28);
+                shape.lineTo(-28, 28);
+                shape.lineTo(-28, 10);
+                shape.lineTo(-15, 0);
+                shape.lineTo(-28, -10);
+                shape.closePath();
+                const geo = new THREE.ExtrudeGeometry(shape, { depth: 16, bevelEnabled: false });
+                geo.rotateX(Math.PI / 2);
+                geo.translate(0, 8, 0);
+                group.add(createColoredPartMesh(geo));
+
+            } else if (modelType === "exam305") {
+                const coneBody = new THREE.CylinderGeometry(11, 17, 50, 24);
+                coneBody.rotateZ(Math.PI / 2);
+                group.add(createColoredPartMesh(coneBody));
+                const bigFlange = new THREE.CylinderGeometry(26, 26, 6, 24);
+                bigFlange.rotateZ(Math.PI / 2);
+                bigFlange.translate(-26, 0, 0);
+                group.add(createColoredPartMesh(bigFlange));
+                const smallFlange = new THREE.CylinderGeometry(19, 19, 6, 24);
+                smallFlange.rotateZ(Math.PI / 2);
+                smallFlange.translate(26, 0, 0);
+                group.add(createColoredPartMesh(smallFlange));
+
+            } else if (modelType === "exam306") {
+                const mainPipe = new THREE.CylinderGeometry(12, 12, 62, 20);
+                mainPipe.rotateZ(Math.PI / 2);
+                group.add(createColoredPartMesh(mainPipe));
+
+                const flangeL = new THREE.CylinderGeometry(22, 22, 6, 20);
+                flangeL.rotateZ(Math.PI / 2);
+                flangeL.translate(-29, 0, 0);
+                group.add(createColoredPartMesh(flangeL));
+
+                const flangeR = new THREE.CylinderGeometry(22, 22, 6, 20);
+                flangeR.rotateZ(Math.PI / 2);
+                flangeR.translate(29, 0, 0);
+                group.add(createColoredPartMesh(flangeR));
+
+                const branchPipe = new THREE.CylinderGeometry(12, 12, 26, 20);
+                branchPipe.translate(0, 14, 0);
+                group.add(createColoredPartMesh(branchPipe));
+
+                const flangeTop = new THREE.CylinderGeometry(22, 22, 6, 20);
+                flangeTop.translate(0, 26, 0);
+                group.add(createColoredPartMesh(flangeTop));
+
+            } else if (modelType === "isoHoleBlock") {
+                const shape = new THREE.Shape();
+                shape.moveTo(-26, -26);
+                shape.lineTo(26, -26);
+                shape.lineTo(26, 26);
+                shape.lineTo(-26, 26);
+                shape.closePath();
+                const hole = new THREE.Path();
+                hole.absarc(0, 0, 15, 0, Math.PI * 2, false);
+                shape.holes.push(hole);
+                const geo = new THREE.ExtrudeGeometry(shape, { depth: 20, bevelEnabled: false, curveSegments: 24 });
+                geo.translate(0, 0, -10);
+                group.add(createColoredPartMesh(geo));
+            }
+
+            group.scale.set(scale, scale, scale);
+            return group;
+        }
+
+        // =========================================================================
+        // 4. MAIN 3D SCENE INITIALIZATION (CATAN HEX ARCHIPELAGO)
+        // =========================================================================
+        const mainContainer = document.getElementById("mainCanvasContainer");
+        const labelsContainer = document.getElementById("labelsContainer");
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0ea5e9);
+        scene.fog = new THREE.FogExp2(0x0ea5e9, 0.0032);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 800);
+        camera.position.set(0, 82, 118);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        mainContainer.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.06;
+        controls.maxPolarAngle = Math.PI / 2 - 0.06;
+        controls.minDistance = 24;
+        controls.maxDistance = 210;
+        controls.target.set(0, 0, 5);
+
+        let cameraTargetPos = null;
+        let controlsTargetLook = null;
+        let focusedIslandId = null;
+
+        // Lighting (Dawn / Day / Night Switchable)
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+        scene.add(ambientLight);
+
+        const sunLight = new THREE.DirectionalLight(0xfffbeb, 1.5);
+        sunLight.position.set(60, 110, 50);
+        sunLight.castShadow = true;
+        scene.add(sunLight);
+
+        // Low-Poly Animated Ocean Plane
+        const waterGeo = new THREE.PlaneGeometry(520, 520, 44, 44);
+        waterGeo.rotateX(-Math.PI / 2);
+        const waterPosAttr = waterGeo.attributes.position;
+        const waterBaseY = [];
+        for (let i = 0; i < waterPosAttr.count; i++) {
+            waterBaseY.push(waterPosAttr.getY(i));
+        }
+        const waterMat = new THREE.MeshStandardMaterial({
+            color: 0x0284c7,
+            roughness: 0.25,
+            metalness: 0.1,
+            flatShading: true
+        });
+        const waterMesh = new THREE.Mesh(waterGeo, waterMat);
+        waterMesh.position.y = -4.5;
+        scene.add(waterMesh);
+
+        // Floating Low-Poly Clouds
+        const cloudsGroup = new THREE.Group();
+        scene.add(cloudsGroup);
+        for (let i = 0; i < 14; i++) {
+            const cGroup = new THREE.Group();
+            const cMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
+            for (let j = 0; j < 3; j++) {
+                const puff = new THREE.Mesh(new THREE.DodecahedronGeometry(2.5 + Math.random() * 1.8, 0), cMat);
+                puff.position.set(j * 2.4 - 2.4, Math.random() * 0.8, Math.random() * 1.2);
+                cGroup.add(puff);
+            }
+            cGroup.position.set((Math.random() - 0.5) * 190, 26 + Math.random() * 14, (Math.random() - 0.5) * 150);
+            cGroup.userData = { speed: 0.02 + Math.random() * 0.025 };
+            cloudsGroup.add(cGroup);
+        }
+
+        // =========================================================================
+        // 5. BUILD 6 CATAN HEXAGONAL ISLANDS & 30 CASTING LANDMARK BUILDINGS
+        // =========================================================================
+        const clickableMeshes = [];
+        const islandAnchors = [];
+        const buildingEntries = {};
+        const nightLights = [];
+
+        function createLowPolyTree(x, y, z) {
+            const tGroup = new THREE.Group();
+            const trunk = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.28, 0.42, 1.6, 6),
+                new THREE.MeshStandardMaterial({ color: 0x78350f, flatShading: true })
+            );
+            trunk.position.y = 0.8;
+            tGroup.add(trunk);
+
+            const foliage = new THREE.Mesh(
+                new THREE.ConeGeometry(1.45, 3.2, 6),
+                new THREE.MeshStandardMaterial({ color: 0x15803d, flatShading: true })
+            );
+            foliage.position.y = 2.6;
+            tGroup.add(foliage);
+            tGroup.position.set(x, y, z);
+            return tGroup;
+        }
+
+        ISLANDS_DATA.forEach((island) => {
+            const iGroup = new THREE.Group();
+            iGroup.position.set(island.hexPos.x, 0, island.hexPos.z);
+            scene.add(iGroup);
+
+            // 1. Rock Under-base
+            const rockGeo = new THREE.CylinderGeometry(18.5, 11.5, 6.5, 6);
+            const rockMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.85, flatShading: true });
+            const rockMesh = new THREE.Mesh(rockGeo, rockMat);
+            rockMesh.position.y = -3.2;
+            rockMesh.userData = { type: "island", islandId: island.id };
+            iGroup.add(rockMesh);
+            clickableMeshes.push(rockMesh);
+
+            // 2. Catan Hexagonal Turf Cap
+            const capGeo = new THREE.CylinderGeometry(19.5, 18.5, 2.2, 6);
+            const capMat = new THREE.MeshStandardMaterial({ color: island.topColor, roughness: 0.65, flatShading: true });
+            const capMesh = new THREE.Mesh(capGeo, capMat);
+            capMesh.position.y = 0.9;
+            capMesh.userData = { type: "island", islandId: island.id };
+            iGroup.add(capMesh);
+            clickableMeshes.push(capMesh);
+
+            // Hex Rim Border
+            const rimEdges = new THREE.EdgesGeometry(capGeo);
+            const rimLine = new THREE.LineSegments(rimEdges, new THREE.LineBasicMaterial({ color: 0xffffff }));
+            capMesh.add(rimLine);
+
+            // Soapbox Crate in Center of Island (for the NPC Easter Egg)
+            const crate = new THREE.Mesh(
+                new THREE.BoxGeometry(2.8, 1.4, 2.8),
+                new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.8 })
+            );
+            crate.position.set(0, 2.5, 0);
+            iGroup.add(crate);
+
+            // Warm Night Lantern PointLight per Island
+            const pLight = new THREE.PointLight(0xfbbf24, 0, 38);
+            pLight.position.set(0, 9, 0);
+            iGroup.add(pLight);
+            nightLights.push(pLight);
+
+            // Decorative Low-Poly Trees on Hex Corners
+            for (let t = 0; t < 4; t++) {
+                const ang = (t / 4) * Math.PI * 2 + 0.35;
+                iGroup.add(createLowPolyTree(Math.cos(ang) * 14.5, 2.0, Math.sin(ang) * 14.5));
+            }
+
+            // Floating HTML Island Title Banner
+            const labelEl = document.createElement("div");
+            labelEl.className = "island-label";
+            labelEl.onclick = (e) => {
+                e.stopPropagation();
+                window.app.focusIsland(island.id);
+            };
+            labelsContainer.appendChild(labelEl);
+
+            islandAnchors.push({
+                island,
+                worldPos: new THREE.Vector3(island.hexPos.x, 11.5, island.hexPos.z),
+                domEl: labelEl
+            });
+
+            // 5 Question Landmark Buildings arranged in a Pentagon on the Hex Island
+            island.questions.forEach((q, idx) => {
+                const angle = (idx / 5) * Math.PI * 2 - Math.PI / 2;
+                const radius = 10.6;
+                const lx = Math.cos(angle) * radius;
+                const lz = Math.sin(angle) * radius;
+                const wx = island.hexPos.x + lx;
+                const wz = island.hexPos.z + lz;
+
+                const bGroup = new THREE.Group();
+                bGroup.position.set(lx, 2.0, lz);
+                iGroup.add(bGroup);
+
+                // Pedestal Base
+                const pedMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.4 });
+                const pedMesh = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 3.0, 1.4, 6), pedMat);
+                pedMesh.position.y = 0.7;
+                pedMesh.userData = { type: "question", qId: q.id, islandId: island.id };
+                bGroup.add(pedMesh);
+                clickableMeshes.push(pedMesh);
+
+                // Miniature 3D Textbook-Colored Casting Landmark
+                const miniModel = createCastingModelGroup(q.modelType, 0.068);
+                miniModel.position.y = 3.2;
+                miniModel.traverse((child) => {
+                    if (child.isMesh) {
+                        child.userData = { type: "question", qId: q.id, islandId: island.id };
+                        clickableMeshes.push(child);
+                    }
+                });
+                bGroup.add(miniModel);
+
+                // GoldenSolved Star / Ring Beacon
+                const beaconGeo = new THREE.OctahedronGeometry(0.85, 0);
+                const beaconMat = new THREE.MeshStandardMaterial({
+                    color: 0xfacc15,
+                    emissive: 0xca8a04,
+                    emissiveIntensity: 0.6,
+                    roughness: 0.2
+                });
+                const beaconMesh = new THREE.Mesh(beaconGeo, beaconMat);
+                beaconMesh.position.y = 5.9;
+                beaconMesh.visible = false;
+                bGroup.add(beaconMesh);
+
+                // Floating HTML Building Pin
+                const pinEl = document.createElement("div");
+                pinEl.className = "building-pin";
+                pinEl.onclick = (e) => {
+                    e.stopPropagation();
+                    window.app.openQuestion(q.id);
+                };
+                labelsContainer.appendChild(pinEl);
+
+                buildingEntries[q.id] = {
+                    q,
+                    island,
+                    miniModel,
+                    pedMesh,
+                    beaconMesh,
+                    worldPos: new THREE.Vector3(wx, 7.6, wz),
+                    domPin: pinEl,
+                    isSearchMatch: false
+                };
+            });
+        });
+
+        // Bridges connecting the 6 Hexagonal Islands
+        const bridgePairs = [[0, 1], [1, 2], [0, 3], [3, 4], [4, 5], [2, 5], [1, 4]];
+        bridgePairs.forEach(([a, b]) => {
+            const p1 = new THREE.Vector3(ISLANDS_DATA[a].hexPos.x, 1.2, ISLANDS_DATA[a].hexPos.z);
+            const p2 = new THREE.Vector3(ISLANDS_DATA[b].hexPos.x, 1.2, ISLANDS_DATA[b].hexPos.z);
+            const dist = p1.distanceTo(p2);
+            const mid = p1.clone().add(p2).multiplyScalar(0.5);
+            const bridgeGeo = new THREE.BoxGeometry(2.2, 0.35, dist - 34);
+            const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.8 });
+            const bridge = new THREE.Mesh(bridgeGeo, bridgeMat);
+            bridge.position.copy(mid);
+            bridge.lookAt(p2);
+            scene.add(bridge);
+        });
+
+        // =========================================================================
+        // 6. COLLABORATION LINES (協作線) & WALKING SOAPBOX NPC (捲髮眼鏡島長)
+        // =========================================================================
+        const collabGroup = new THREE.Group();
+        collabGroup.visible = false;
+        scene.add(collabGroup);
+
+        const collabPulses = [];
+        const collabDomLabels = [];
+        let collabEnabled = false;
+
+        COLLAB_LINKS.forEach((link, idx) => {
+            const fromEntry = buildingEntries[link.from];
+            const toEntry = buildingEntries[link.to];
+            if (!fromEntry || !toEntry) return;
+
+            const pStart = fromEntry.worldPos.clone().add(new THREE.Vector3(0, -2, 0));
+            const pEnd = toEntry.worldPos.clone().add(new THREE.Vector3(0, -2, 0));
+            const pMid = pStart.clone().add(pEnd).multiplyScalar(0.5);
+            pMid.y += 22 + (idx % 3) * 5;
+
+            const curve = new THREE.QuadraticBezierCurve3(pStart, pMid, pEnd);
+            const tubeGeo = new THREE.TubeGeometry(curve, 36, 0.32, 8, false);
+            const tubeMat = new THREE.MeshBasicMaterial({ color: link.color, transparent: true, opacity: 0.78 });
+            const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
+            collabGroup.add(tubeMesh);
+
+            // Animated traveling pulse sphere
+            const pulseMesh = new THREE.Mesh(
+                new THREE.SphereGeometry(0.95, 12, 12),
+                new THREE.MeshBasicMaterial({ color: 0xffffff })
+            );
+            collabGroup.add(pulseMesh);
+            collabPulses.push({ curve, mesh: pulseMesh, t: idx * 0.17 });
+
+            // Floating HTML Label at Apex of Arc
+            const cLabel = document.createElement("div");
+            cLabel.className = "collab-label hidden";
+            cLabel.innerHTML = `<span class="px-2 py-0.5 rounded-full bg-slate-950/90 border border-cyan-400/60 text-cyan-200 text-[10px] font-bold shadow-lg whitespace-nowrap">🔗 ${link.label}</span>`;
+            labelsContainer.appendChild(cLabel);
+            collabDomLabels.push({ worldPos: curve.getPoint(0.5), domEl: cLabel });
+        });
+
+        // Build 3D Walking NPC ("捲髮眼鏡製圖島長")
+        const npcGroup = new THREE.Group();
+        scene.add(npcGroup);
+
+        // Torso
+        const npcTorso = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.85, 1.0, 2.4, 10),
+            new THREE.MeshStandardMaterial({ color: 0xf97316 })
+        );
+        npcTorso.position.y = 1.6;
+        npcTorso.userData = { type: "npc" };
+        npcGroup.add(npcTorso);
+        clickableMeshes.push(npcTorso);
+
+        // Head
+        const npcHead = new THREE.Mesh(
+            new THREE.SphereGeometry(0.95, 14, 14),
+            new THREE.MeshStandardMaterial({ color: 0xfde68a })
+        );
+        npcHead.position.y = 3.4;
+        npcHead.userData = { type: "npc" };
+        npcGroup.add(npcHead);
+        clickableMeshes.push(npcHead);
+
+        // Signature Fluffy Curly Hair
+        const hairMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.9 });
+        [
+            [0, 4.2, 0, 0.72], [-0.55, 3.9, 0.2, 0.55], [0.55, 3.9, 0.2, 0.55],
+            [0, 3.9, -0.55, 0.6], [-0.4, 4.1, -0.35, 0.55], [0.4, 4.1, -0.35, 0.55]
+        ].forEach(([hx, hy, hz, hr]) => {
+            const curl = new THREE.Mesh(new THREE.SphereGeometry(hr, 8, 8), hairMat);
+            curl.position.set(hx, hy, hz);
+            npcGroup.add(curl);
+        });
+
+        // Glasses
+        const glassMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
+        const gLeft = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.06, 6, 12), glassMat);
+        gLeft.position.set(-0.32, 3.45, 0.88);
+        const gRight = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.06, 6, 12), glassMat);
+        gRight.position.set(0.32, 3.45, 0.88);
+        npcGroup.add(gLeft, gRight);
+
+        // Floating Speech Bubble for NPC
+        const npcBubbleDom = document.createElement("div");
+        npcBubbleDom.className = "npc-bubble";
+        npcBubbleDom.onclick = (e) => {
+            e.stopPropagation();
+            window.app.openNpcModal();
+        };
+        npcBubbleDom.innerHTML = `
+            <div class="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[11px] px-2.5 py-1 rounded-full shadow-xl border-2 border-white flex items-center gap-1 whitespace-nowrap">
+                <span>🧑‍🏭 野生島長開講（點我領秘笈）</span>
+            </div>
+        `;
+        labelsContainer.appendChild(npcBubbleDom);
+
+        // NPC Patrol Waypoints (visiting the soapboxes at the center of each island)
+        const npcWaypoints = ISLANDS_DATA.map(isl => new THREE.Vector3(isl.hexPos.x, 3.2, isl.hexPos.z));
+        let npcSegmentIdx = 0;
+        let npcSegmentProgress = 0;
+        let npcPauseTimer = 2.5;
+
+        // =========================================================================
+        // 7. RAYCASTING (CLICK & MOBILE TAP ON 3D ISLANDS, BUILDINGS OR NPC)
+        // =========================================================================
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let pointerDownPos = { x: 0, y: 0 };
+        let pointerDownTime = 0;
+
+        renderer.domElement.addEventListener("pointerdown", (e) => {
+            pointerDownPos = { x: e.clientX, y: e.clientY };
+            pointerDownTime = performance.now();
+        });
+
+        renderer.domElement.addEventListener("pointerup", (e) => {
+            const moveDist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
+            const elapsedTap = performance.now() - pointerDownTime;
+            // Allow slightly larger finger tap tolerance (14px) on mobile touchscreens
+            if (moveDist > 14 || elapsedTap > 600) return;
+
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+
+            const hits = raycaster.intersectObjects(clickableMeshes, false);
+            if (hits.length > 0) {
+                const data = hits[0].object.userData;
+                if (data.type === "npc") {
+                    window.app.openNpcModal();
+                } else if (data.type === "question") {
+                    window.app.openQuestion(data.qId);
+                } else if (data.type === "island") {
+                    window.app.focusIsland(data.islandId);
+                }
+            }
+        });
+
+        // =========================================================================
+        // 8. SECONDARY 3D ORTHOGRAPHIC VIEWER (SINGLE VIEW + 4-SPLIT 3-VIEW L-LAYOUT)
+        // =========================================================================
+        let modalScene, modalCamera, modalRenderer, modalMeshGroup, modalGlassBox, modalGrid;
+        let isModalThreeInit = false;
+        let modalViewMode = "iso"; // 'iso' | 'front' | 'top' | 'right' | 'quad'
+        let modalCamPos = new THREE.Vector3(140, 140, 140);
+        let modalTargetCamPos = new THREE.Vector3(140, 140, 140);
+        let modalCamUp = new THREE.Vector3(0, 1, 0);
+        let modalTargetCamUp = new THREE.Vector3(0, 1, 0);
+        let modalOrbitAngles = { theta: Math.PI / 4, phi: Math.atan(Math.sqrt(2)) };
+        let isModalDragging = false;
+        let modalPrevMouse = { x: 0, y: 0 };
+        let showModalGlass = false;
+
+        // Auxiliary cameras for 4-Split 'quad' 3-View L-Layout Mode
+        let quadCamTop, quadCamFront, quadCamRight, quadCamIso;
+
+        function initModalThreeViewer() {
+            const container = document.getElementById("modalThreeContainer");
+            if (isModalThreeInit) {
+                resizeModalThree();
+                return;
+            }
+            isModalThreeInit = true;
+
+            modalScene = new THREE.Scene();
+            modalScene.background = new THREE.Color(0x090d16);
+
+            const w = Math.max(container.clientWidth, 300);
+            const h = Math.max(container.clientHeight, 240);
+            const aspect = w / h;
+            const frustum = 92;
+
+            modalCamera = new THREE.OrthographicCamera(
+                (-frustum * aspect) / 2, (frustum * aspect) / 2,
+                frustum / 2, -frustum / 2, 1, 1000
+            );
+
+            quadCamTop   = new THREE.OrthographicCamera(-50, 50, 50, -50, 1, 1000);
+            quadCamFront = new THREE.OrthographicCamera(-50, 50, 50, -50, 1, 1000);
+            quadCamRight = new THREE.OrthographicCamera(-50, 50, 50, -50, 1, 1000);
+            quadCamIso   = new THREE.OrthographicCamera(-50, 50, 50, -50, 1, 1000);
+
+            modalRenderer = new THREE.WebGLRenderer({ antialias: true });
+            modalRenderer.setSize(w, h);
+            modalRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(modalRenderer.domElement);
+
+            modalScene.add(new THREE.AmbientLight(0xffffff, 0.88));
+            const dL1 = new THREE.DirectionalLight(0xffffff, 0.65);
+            dL1.position.set(120, 200, 150);
+            modalScene.add(dL1);
+            const dL2 = new THREE.DirectionalLight(0xffffff, 0.35);
+            dL2.position.set(-120, -100, -120);
+            modalScene.add(dL2);
+
+            modalGrid = new THREE.GridHelper(90, 9, 0x334155, 0x1e293b);
+            modalGrid.position.y = -30;
+            modalScene.add(modalGrid);
+
+            modalMeshGroup = new THREE.Group();
+            modalScene.add(modalMeshGroup);
+
+            // Transparent Glass Projection Box (第三角法透明投影箱)
+            modalGlassBox = new THREE.Group();
+            const bGeo = new THREE.BoxGeometry(66, 66, 66);
+            const bEdges = new THREE.EdgesGeometry(bGeo);
+            const bLines = new THREE.LineSegments(bEdges, new THREE.LineDashedMaterial({ color: 0x38bdf8, dashSize: 4, gapSize: 2 }));
+            bLines.computeLineDistances();
+            modalGlassBox.add(bLines);
+            modalGlassBox.add(new THREE.Mesh(bGeo, new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide })));
+            modalGlassBox.visible = false;
+            modalScene.add(modalGlassBox);
+
+            // Unified Pointer + Touch Drag Handler (Prevents mobile modal scrolling while rotating 3D casting)
+            const dom = modalRenderer.domElement;
+
+            const startDrag = (clientX, clientY) => {
+                isModalDragging = true;
+                modalPrevMouse = { x: clientX, y: clientY };
+            };
+
+            const moveDrag = (clientX, clientY) => {
+                if (!isModalDragging) return;
+                const dx = clientX - modalPrevMouse.x;
+                const dy = clientY - modalPrevMouse.y;
+                modalPrevMouse = { x: clientX, y: clientY };
+
+                modalOrbitAngles.theta -= dx * 0.012;
+                modalOrbitAngles.phi = Math.max(0.12, Math.min(Math.PI - 0.12, modalOrbitAngles.phi - dy * 0.012));
+
+                if (modalViewMode !== "quad") {
+                    modalViewMode = "iso";
+                    const r = 240;
+                    modalTargetCamPos.set(
+                        r * Math.sin(modalOrbitAngles.phi) * Math.sin(modalOrbitAngles.theta),
+                        r * Math.cos(modalOrbitAngles.phi),
+                        r * Math.sin(modalOrbitAngles.phi) * Math.cos(modalOrbitAngles.theta)
+                    );
+                    modalTargetCamUp.set(0, 1, 0);
+                    document.getElementById("modalCamStatus").textContent = "目前視角：360° 自由旋轉觀察（點擊上方按鈕可壓平為標準三視圖）";
+                }
+            };
+
+            dom.addEventListener("pointerdown", (e) => {
+                e.stopPropagation();
+                dom.setPointerCapture(e.pointerId);
+                startDrag(e.clientX, e.clientY);
+            });
+            dom.addEventListener("pointermove", (e) => {
+                if (!isModalDragging) return;
+                e.preventDefault();
+                e.stopPropagation();
+                moveDrag(e.clientX, e.clientY);
+            });
+            dom.addEventListener("pointerup", (e) => {
+                isModalDragging = false;
+                try { dom.releasePointerCapture(e.pointerId); } catch (_) {}
+            });
+            dom.addEventListener("pointercancel", () => { isModalDragging = false; });
+
+            // Explicit Touch Fallback for iOS / Android WebViews
+            dom.addEventListener("touchstart", (e) => {
+                if (e.touches.length === 1) {
+                    startDrag(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }, { passive: true });
+            dom.addEventListener("touchmove", (e) => {
+                if (isModalDragging && e.touches.length === 1) {
+                    e.preventDefault();
+                    moveDrag(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }, { passive: false });
+            dom.addEventListener("touchend", () => { isModalDragging = false; });
+
+            // Observe container size changes for mobile orientation / modal open transitions
+            if (window.ResizeObserver) {
+                const ro = new ResizeObserver(() => resizeModalThree());
+                ro.observe(container);
+            }
+        }
+
+        function resizeModalThree() {
+            if (!modalRenderer || !modalCamera) return;
+            const container = document.getElementById("modalThreeContainer");
+            const w = Math.max(container.clientWidth, 280);
+            const h = Math.max(container.clientHeight, 220);
+            const aspect = w / h;
+            const frustum = 92;
+
+            modalCamera.left = (-frustum * aspect) / 2;
+            modalCamera.right = (frustum * aspect) / 2;
+            modalCamera.top = frustum / 2;
+            modalCamera.bottom = -frustum / 2;
+            modalCamera.updateProjectionMatrix();
+
+            // Update 4-Quad sub-cameras
+            const qAspect = (w / 2) / (h / 2);
+            const qFrustum = 82;
+            [quadCamTop, quadCamFront, quadCamRight, quadCamIso].forEach((cam) => {
+                if (!cam) return;
+                cam.left = (-qFrustum * qAspect) / 2;
+                cam.right = (qFrustum * qAspect) / 2;
+                cam.top = qFrustum / 2;
+                cam.bottom = -qFrustum / 2;
+                cam.updateProjectionMatrix();
+            });
+
+            modalRenderer.setSize(w, h);
+        }
+
+        // =========================================================================
+        // 9. UI & INTERACTION CONTROLLERS (EXPOSED ON window.app)
+        // =========================================================================
+        let activeQuestionId = "1-1";
+        let currentQuickIslandId = 1;
+
+        function updateAllHUD() {
+            const { className, seatNo, name, title } = state.student;
+            document.getElementById("hudStudentName").textContent = `${className}｜${seatNo} ${name}`;
+            document.getElementById("hudStudentTitle").textContent = `${title} ✎`;
+
+            const totalSolved = getTotalSolvedCount();
+            const clearedIslands = ISLANDS_DATA.filter(i => getIslandSolvedCount(i.id) === 5).length;
+            document.getElementById("hudSolvedCount").textContent = totalSolved;
+            document.getElementById("hudIslandsCleared").textContent = clearedIslands;
+            document.getElementById("hudProgressBar").style.width = `${Math.round((totalSolved / 30) * 100)}%`;
+
+            const certBtn = document.getElementById("hudCertBtn");
+            if (totalSolved === 30) certBtn.classList.add("animate-bounce");
+            else certBtn.classList.remove("animate-bounce");
+
+            // Update 6 Island Floating Headers
+            islandAnchors.forEach(({ island, domEl }) => {
+                const solved = getIslandSolvedCount(island.id);
+                const isDone = solved === 5;
+                domEl.innerHTML = `
+                    <div class="px-2.5 py-1 rounded-2xl backdrop-blur-md border-2 shadow-xl flex items-center gap-1.5 ${
+                        isDone ? 'bg-emerald-950/90 border-emerald-400 text-emerald-200' : 'bg-slate-900/90 border-slate-600 text-white'
+                    }">
+                        <span class="px-1.5 py-0.5 rounded-md text-[9px] md:text-[10px] font-black bg-black/40 text-amber-300">${island.week}</span>
+                        <span class="text-[11px] md:text-xs font-black whitespace-nowrap">${island.shortName}</span>
+                        <span class="text-[11px] font-black ${isDone ? 'text-emerald-400' : 'text-amber-400'}">${solved}/5★</span>
+                    </div>
+                `;
+            });
+
+            // Update 30 Building Floating Pins & Golden Beacons
+            Object.values(buildingEntries).forEach((entry) => {
+                const { q, beaconMesh, domPin, isSearchMatch } = entry;
+                const isSolved = !!state.solved[q.id];
+                beaconMesh.visible = isSolved;
+
+                const highlightClass = isSearchMatch ? "search-highlight-pin ring-2 ring-rose-400 scale-110" : "";
+                domPin.innerHTML = `
+                    <div class="${highlightClass} px-2 py-0.5 rounded-xl border text-[10px] md:text-[11px] font-black shadow-lg flex items-center gap-1 whitespace-nowrap ${
+                        isSolved 
+                            ? 'bg-amber-400 text-slate-950 border-white' 
+                            : 'bg-slate-900/95 text-sky-300 border-sky-400/70 hover:bg-sky-500 hover:text-slate-950'
+                    }">
+                        <span>${isSolved ? '★' : '🧊'}${q.id}</span>
+                        <span class="hidden sm:inline">${q.title}</span>
+                    </div>
+                `;
+            });
+
+            // Update Bottom Dock Island Buttons
+            const dockList = document.getElementById("dockIslandsList");
+            dockList.innerHTML = "";
+            ISLANDS_DATA.forEach((isl) => {
+                const solved = getIslandSolvedCount(isl.id);
+                const isSelected = currentQuickIslandId === isl.id;
+                const btn = document.createElement("button");
+                btn.onclick = () => window.app.focusIsland(isl.id);
+                btn.className = `px-2.5 py-1.5 rounded-xl text-[11px] md:text-xs font-bold transition flex items-center gap-1 border ${
+                    isSelected 
+                        ? 'bg-sky-500 text-slate-950 border-white font-black shadow' 
+                        : solved === 5 
+                            ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900' 
+                            : 'bg-slate-800/90 text-slate-300 border-slate-700 hover:bg-slate-700'
+                }`;
+                btn.innerHTML = `<span>${isl.id}島</span><span class="text-[10px] opacity-80">(${solved}/5)</span>`;
+                dockList.appendChild(btn);
+            });
+
+            // Always show the 5 Castings Quick Dock for currentQuickIslandId (5-column grid so all 5 fit on mobile)
+            const activeIsl = ISLANDS_DATA.find(i => i.id === currentQuickIslandId) || ISLANDS_DATA[0];
+            document.getElementById("focusIslandBadge").textContent = `${activeIsl.id}島｜${activeIsl.shortName}`;
+            document.getElementById("focusIslandTitle").textContent = "點選本島 5 座立體鑄件轉三視圖：";
+            document.getElementById("btnReturnPanorama").classList.toggle("hidden", !focusedIslandId);
+
+            const pills = document.getElementById("focusIslandPills");
+            pills.innerHTML = "";
+            const circledNums = ["①", "②", "③", "④", "⑤"];
+            activeIsl.questions.forEach((q, idx) => {
+                const solved = !!state.solved[q.id];
+                const pBtn = document.createElement("button");
+                pBtn.onclick = () => window.app.openQuestion(q.id);
+                pBtn.className = `px-1.5 py-1.5 rounded-xl text-[11px] md:text-xs font-black border transition flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1 shadow truncate ${
+                    solved 
+                        ? 'bg-emerald-500/25 border-emerald-400 text-emerald-200' 
+                        : 'bg-sky-500/20 hover:bg-sky-500 hover:text-slate-950 border-sky-400/60 text-sky-200'
+                }`;
+                pBtn.innerHTML = `<span>${solved ? '★' : circledNums[idx]} ${q.id}</span><span class="text-[10px] sm:text-xs truncate max-w-full">${q.title}</span>`;
+                pills.appendChild(pBtn);
+            });
+
+            const allBtn = document.getElementById("dockBtn-all");
+            if (focusedIslandId) {
+                allBtn.className = "px-2.5 py-1.5 rounded-xl text-[11px] md:text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 transition flex items-center gap-1";
+            } else {
+                allBtn.className = "px-2.5 py-1.5 rounded-xl text-[11px] md:text-xs font-black bg-sky-500 text-slate-950 shadow transition flex items-center gap-1";
+            }
+        }
+
+        // Expose App Methods
+        window.app = {
+            getActiveOrFirstQuestionId() {
+                return activeQuestionId || "1-1";
+            },
+
+            focusIsland(islandId) {
+                focusedIslandId = islandId;
+                if (!islandId) {
+                    cameraTargetPos = new THREE.Vector3(0, 82, 118);
+                    controlsTargetLook = new THREE.Vector3(0, 0, 5);
+                } else {
+                    currentQuickIslandId = islandId;
+                    const isl = ISLANDS_DATA.find(i => i.id === islandId);
+                    if (isl) {
+                        cameraTargetPos = new THREE.Vector3(isl.hexPos.x, 32, isl.hexPos.z + 38);
+                        controlsTargetLook = new THREE.Vector3(isl.hexPos.x, 3, isl.hexPos.z);
+                    }
+                }
+                updateAllHUD();
+            },
+
+            focusNPC() {
+                const pos = npcGroup.position;
+                cameraTargetPos = new THREE.Vector3(pos.x, pos.y + 18, pos.z + 24);
+                controlsTargetLook = pos.clone();
+                window.app.openNpcModal();
+            },
+
+            toggleCollabLines() {
+                collabEnabled = !collabEnabled;
+                collabGroup.visible = collabEnabled;
+                collabDomLabels.forEach(l => l.domEl.classList.toggle("hidden", !collabEnabled));
+                const btn = document.getElementById("collabToggleBtn");
+                if (collabEnabled) {
+                    btn.className = "px-2.5 py-1.5 rounded-xl text-[11px] md:text-xs font-black bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-500/30 transition flex items-center gap-1";
+                    btn.innerHTML = `<i class="fa-solid fa-bezier-curve"></i><span class="hidden md:inline">協作線: 開</span>`;
+                    window.app.focusIsland(null);
+                } else {
+                    btn.className = "px-2.5 py-1.5 rounded-xl text-[11px] md:text-xs font-bold bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 transition flex items-center gap-1";
+                    btn.innerHTML = `<i class="fa-solid fa-bezier-curve"></i><span class="hidden md:inline">協作線: 關</span>`;
+                }
+            },
+
+            setTimeOfDay(mode) {
+                ["dawn", "day", "night"].forEach(m => {
+                    const b = document.getElementById(`timeBtn-${m}`);
+                    if (m === mode) {
+                        b.className = "px-2 py-1 rounded-lg text-[10px] md:text-[11px] font-black bg-sky-500 text-slate-950 shadow transition";
+                    } else {
+                        b.className = "px-2 py-1 rounded-lg text-[10px] md:text-[11px] font-bold text-slate-400 hover:text-white transition";
+                    }
+                });
+
+                if (mode === "dawn") {
+                    scene.background.setHex(0xfb923c);
+                    scene.fog.color.setHex(0xfb923c);
+                    sunLight.color.setHex(0xfed7aa);
+                    sunLight.intensity = 1.2;
+                    sunLight.position.set(-90, 45, -30);
+                    ambientLight.intensity = 0.65;
+                    waterMat.color.setHex(0x0369a1);
+                    nightLights.forEach(l => l.intensity = 1.2);
+                } else if (mode === "day") {
+                    scene.background.setHex(0x0ea5e9);
+                    scene.fog.color.setHex(0x0ea5e9);
+                    sunLight.color.setHex(0xfffbeb);
+                    sunLight.intensity = 1.5;
+                    sunLight.position.set(60, 110, 50);
+                    ambientLight.intensity = 0.85;
+                    waterMat.color.setHex(0x0284c7);
+                    nightLights.forEach(l => l.intensity = 0);
+                } else if (mode === "night") {
+                    scene.background.setHex(0x090d16);
+                    scene.fog.color.setHex(0x090d16);
+                    sunLight.color.setHex(0x818cf8);
+                    sunLight.intensity = 0.45;
+                    sunLight.position.set(-50, 80, -60);
+                    ambientLight.intensity = 0.35;
+                    waterMat.color.setHex(0x0f172a);
+                    nightLights.forEach(l => l.intensity = 3.2);
+                }
+            },
+
+            // Keyword Search & Highlight
+            handleSearch(query) {
+                const qStr = query.trim().toLowerCase();
+                const clearBtn = document.getElementById("clearSearchBtn");
+                const dropdown = document.getElementById("searchDropdown");
+                clearBtn.classList.toggle("hidden", !qStr);
+
+                if (!qStr) {
+                    Object.values(buildingEntries).forEach(e => e.isSearchMatch = false);
+                    dropdown.classList.add("hidden");
+                    updateAllHUD();
+                    return;
+                }
+
+                const matches = [];
+                Object.values(buildingEntries).forEach((entry) => {
+                    const haystack = `${entry.q.id} ${entry.q.title} ${entry.q.keywords} ${entry.q.stem} ${entry.island.name}`.toLowerCase();
+                    const matched = haystack.includes(qStr);
+                    entry.isSearchMatch = matched;
+                    if (matched) matches.push(entry);
+                });
+
+                updateAllHUD();
+                dropdown.classList.remove("hidden");
+                if (matches.length === 0) {
+                    dropdown.innerHTML = `<div class="p-2.5 text-xs text-slate-400 text-center">找不到符合「${query}」的鑄件，試試：單斜面、複斜面、丙檢、等角</div>`;
+                } else {
+                    dropdown.innerHTML = matches.map(m => `
+                        <button onclick="window.app.openQuestion('${m.q.id}'); document.getElementById('searchDropdown').classList.add('hidden');" 
+                            class="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 flex items-center justify-between gap-2 transition">
+                            <div>
+                                <span class="text-xs font-black text-sky-400">[${m.q.id}] ${m.q.title}</span>
+                                <p class="text-[11px] text-slate-400 line-clamp-1">${m.q.stem}</p>
+                            </div>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-amber-300 shrink-0">${m.island.shortName}</span>
+                        </button>
+                    `).join("");
+                }
+            },
+
+            clearSearch() {
+                const inp = document.getElementById("searchInput");
+                inp.value = "";
+                window.app.handleSearch("");
+            },
+
+            // Question & 3D Orthographic 3-View Modal
+            openQuestion(qId) {
+                activeQuestionId = qId;
+                const entry = buildingEntries[qId];
+                if (!entry) return;
+
+                currentQuickIslandId = entry.island.id;
+                window.app.focusIsland(entry.island.id);
+                document.getElementById("questionModal").classList.remove("hidden");
+                initModalThreeViewer();
+                this.renderQuestionModalContent();
+                // Trigger delayed resize to guarantee accurate canvas dimensions on mobile browsers
+                requestAnimationFrame(() => resizeModalThree());
+                setTimeout(() => resizeModalThree(), 120);
+            },
+
+            closeQuestionModal() {
+                document.getElementById("questionModal").classList.add("hidden");
+            },
+
+            renderQuestionModalContent() {
+                const entry = buildingEntries[activeQuestionId];
+                const { q, island } = entry;
+
+                document.getElementById("qModalIslandBadge").textContent = island.week;
+                document.getElementById("qModalIslandTitle").textContent = island.name;
+
+                // Render 1..5 Castings Tabs in a 5-Column Grid so all 5 buttons are visible on mobile
+                const tabs = document.getElementById("qModalTabs");
+                tabs.innerHTML = "";
+                const circledNums = ["①", "②", "③", "④", "⑤"];
+                island.questions.forEach((iq, idx) => {
+                    const isCurr = iq.id === q.id;
+                    const isSolved = !!state.solved[iq.id];
+                    const b = document.createElement("button");
+                    b.onclick = () => {
+                        activeQuestionId = iq.id;
+                        this.renderQuestionModalContent();
+                    };
+                    b.className = `py-1.5 px-1 rounded-xl text-[11px] md:text-xs font-black border transition flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1 truncate ${
+                        isCurr 
+                            ? 'bg-sky-500 text-slate-950 border-white shadow-md' 
+                            : isSolved 
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
+                                : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    }`;
+                    b.innerHTML = `<span>${isSolved ? '★' : circledNums[idx]} ${iq.id}</span><span class="text-[10px] sm:text-xs truncate max-w-full">${iq.title}</span>`;
+                    tabs.appendChild(b);
+                });
+
+                // Build 3D Model in Modal Viewer
+                while (modalMeshGroup.children.length > 0) {
+                    modalMeshGroup.remove(modalMeshGroup.children[0]);
+                }
+                modalMeshGroup.add(createCastingModelGroup(q.modelType, 1.0));
+                this.snapModalCamera("iso");
+                resizeModalThree();
+
+                document.getElementById("qModalModelName").textContent = `鑄件 ${q.id}：${q.title}`;
+                document.getElementById("qModalHint").innerHTML = `💡 <strong>觀察重點：</strong>${q.hint}`;
+                document.getElementById("qModalCodeBadge").textContent = `鑄件地標 ${q.id}（第 ${q.qNum} / 30 題）`;
+
+                const isSolved = !!state.solved[q.id];
+                const sBadge = document.getElementById("qModalSolvedBadge");
+                if (isSolved) {
+                    sBadge.className = "px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+                    sBadge.innerHTML = "✔ 已過關";
+                } else {
+                    sBadge.className = "px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30";
+                    sBadge.innerHTML = "挑戰中";
+                }
+
+                document.getElementById("qModalStem").textContent = q.stem;
+                document.getElementById("qModalSvg").innerHTML = q.svg || "";
+
+                const optsBox = document.getElementById("qModalOptions");
+                optsBox.innerHTML = "";
+                const prevSel = state.selectedOption[q.id];
+                const letters = ["A", "B", "C", "D"];
+
+                q.options.forEach((optText, idx) => {
+                    const btn = document.createElement("button");
+                    let cls = "bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-200";
+                    if (prevSel !== undefined) {
+                        if (prevSel === idx && idx === q.ans) cls = "bg-emerald-500/20 border-emerald-400 text-emerald-200";
+                        else if (prevSel === idx && idx !== q.ans) cls = "bg-rose-500/20 border-rose-400 text-rose-200";
+                        else if (isSolved && idx === q.ans) cls = "bg-emerald-500/10 border-emerald-500/40 text-emerald-300";
+                    }
+                    btn.className = `w-full text-left p-2.5 md:p-3 rounded-xl border-2 transition flex items-start gap-2.5 ${cls}`;
+                    btn.onclick = () => this.selectAnswer(q, island, idx);
+                    btn.innerHTML = `
+                        <span class="w-5 h-5 rounded-md bg-slate-950 border border-slate-600 flex items-center justify-center text-xs font-black shrink-0 mt-0.5">${letters[idx]}</span>
+                        <span class="text-xs md:text-sm font-medium leading-relaxed">${optText}</span>
+                    `;
+                    optsBox.appendChild(btn);
+                });
+
+                const fb = document.getElementById("qModalFeedback");
+                if (prevSel !== undefined) {
+                    const ok = prevSel === q.ans;
+                    fb.classList.remove("hidden");
+                    fb.className = `mt-3 p-3 rounded-xl border text-xs md:text-sm leading-relaxed ${
+                        ok ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200' : 'bg-rose-950/60 border-rose-500/50 text-rose-200'
+                    }`;
+                    fb.innerHTML = `<div class="font-black ${ok ? 'text-emerald-400' : 'text-rose-400'} mb-1">${ok ? '🎉 答對了！地標已點亮金星！' : '💡 再切換上方三視圖觀察一下，重新選擇即可過關：'}</div>${q.exp}`;
+                } else {
+                    fb.classList.add("hidden");
+                }
+            },
+
+            selectAnswer(q, island, idx) {
+                state.selectedOption[q.id] = idx;
+                if (idx === q.ans) {
+                    state.solved[q.id] = true;
+                    if (getIslandSolvedCount(island.id) === 5 && !state.islandDoneTime[island.id]) {
+                        const d = new Date();
+                        state.islandDoneTime[island.id] = `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+                    }
+                }
+                saveState();
+                this.renderQuestionModalContent();
+            },
+
+            stepModalQuestion(dir) {
+                const allIds = Object.keys(buildingEntries);
+                const curIdx = allIds.indexOf(activeQuestionId);
+                const nextIdx = (curIdx + dir + allIds.length) % allIds.length;
+                this.openQuestion(allIds[nextIdx]);
+            },
+
+            snapModalCamera(view) {
+                modalViewMode = view;
+                ["iso", "front", "top", "right", "quad"].forEach(v => {
+                    const b = document.getElementById(`mCam-${v}`);
+                    if (!b) return;
+                    if (v === view) {
+                        b.className = "py-1.5 px-1 rounded-xl text-[11px] md:text-xs font-black bg-sky-500 text-slate-950 shadow-md transition flex flex-col sm:flex-row items-center justify-center gap-1";
+                    } else if (v === "quad") {
+                        b.className = "py-1.5 px-1 rounded-xl text-[11px] md:text-xs font-bold bg-indigo-950 hover:bg-indigo-800 text-indigo-200 border border-indigo-400/40 transition flex flex-col sm:flex-row items-center justify-center gap-1";
+                    } else {
+                        b.className = "py-1.5 px-1 rounded-xl text-[11px] md:text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 transition flex flex-col sm:flex-row items-center justify-center gap-1";
+                    }
+                });
+
+                const status = document.getElementById("modalCamStatus");
+                const quadOverlay = document.getElementById("modalQuadOverlay");
+                const singleOverlay = document.getElementById("modalSingleOverlay");
+
+                if (view === "quad") {
+                    quadOverlay.classList.remove("hidden");
+                    singleOverlay.classList.add("hidden");
+                    if (modalGrid) modalGrid.visible = false;
+                    status.textContent = "📐 第三角法三視圖 L 型同框：左上俯視(H)、左下前視(V)、右下右側視(P)、右上 3D 立體";
+                    return;
+                }
+
+                quadOverlay.classList.add("hidden");
+                singleOverlay.classList.remove("hidden");
+                if (modalGrid) modalGrid.visible = (view === "iso");
+
+                if (view === "iso") {
+                    modalOrbitAngles = { theta: Math.PI / 4, phi: Math.atan(Math.sqrt(2)) };
+                    modalTargetCamPos.set(140, 140, 140);
+                    modalTargetCamUp.set(0, 1, 0);
+                    status.textContent = "目前視角：🧊 3D 等角立體視角（可單指滑動旋轉觀察各色面）";
+                } else if (view === "front") {
+                    modalTargetCamPos.set(0, 0, 240);
+                    modalTargetCamUp.set(0, 1, 0);
+                    status.textContent = "🟩 前視圖 (V) 正投影壓平：綠色正垂面實形｜黃色與紅色面集聚成邊視圖直線";
+                } else if (view === "top") {
+                    // Gimbal-lock-free Top View: look from +Y down to 0, with UP = (0, 0, -1) so +X is right and +Z is down!
+                    modalTargetCamPos.set(0, 240, 0.001);
+                    modalTargetCamUp.set(0, 0, -1);
+                    status.textContent = "🟨 俯視圖 (H) 正投影壓平：黃色正垂面實形｜與前視圖「長對正（寬度對齊）」";
+                } else if (view === "right") {
+                    modalTargetCamPos.set(240, 0, 0);
+                    modalTargetCamUp.set(0, 1, 0);
+                    status.textContent = "🟥 右側視圖 (P) 正投影壓平：紅色正垂面實形｜與前視圖「高平齊（高度對齊）」";
+                }
+            },
+
+            toggleModalGlassBox() {
+                showModalGlass = !showModalGlass;
+                if (modalGlassBox) modalGlassBox.visible = showModalGlass;
+                document.getElementById("modalGlassBtn").textContent = showModalGlass ? "📦 隱藏投影箱" : "📦 透明投影箱";
+            },
+
+            // Soapbox NPC Modal
+            openNpcModal() {
+                document.getElementById("npcModal").classList.remove("hidden");
+            },
+            closeNpcModal() {
+                document.getElementById("npcModal").classList.add("hidden");
+            },
+            jumpToNextUnsolved() {
+                this.closeNpcModal();
+                const unsolved = Object.keys(buildingEntries).find(id => !state.solved[id]);
+                this.openQuestion(unsolved || "1-1");
+            },
+
+            // Paper-Doll Avatar Customizer
+            openAvatarModal() {
+                const s = state.student;
+                document.getElementById("inpClass").value = s.className;
+                document.getElementById("inpSeat").value = s.seatNo;
+                document.getElementById("inpName").value = s.name;
+                document.getElementById("inpHair").value = s.hair;
+                document.getElementById("inpGlasses").value = s.glasses;
+                document.getElementById("inpColor").value = s.color;
+                document.getElementById("inpTitle").value = s.title;
+                document.getElementById("avatarModal").classList.remove("hidden");
+                this.renderAvatarPreview();
+            },
+            closeAvatarModal() {
+                document.getElementById("avatarModal").classList.add("hidden");
+            },
+            renderAvatarPreview() {
+                const canvas = document.getElementById("avatarPreviewCanvas");
+                const ctx = canvas.getContext("2d");
+                const hair = document.getElementById("inpHair").value;
+                const glasses = document.getElementById("inpGlasses").value;
+                const color = document.getElementById("inpColor").value;
+                const title = document.getElementById("inpTitle").value;
+                this.drawPaperDollOnCanvas(ctx, 110, 115, 1.0, { hair, glasses, color, title });
+            },
+            drawPaperDollOnCanvas(ctx, cx, cy, scale, cfg) {
+                ctx.save();
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                ctx.translate(cx, cy);
+                ctx.scale(scale, scale);
+
+                // Background Glow
+                const grad = ctx.createRadialGradient(0, -10, 10, 0, 0, 95);
+                grad.addColorStop(0, cfg.color + "55");
+                grad.addColorStop(1, "#0f172a");
+                ctx.fillStyle = grad;
+                ctx.fillRect(-110, -115, 220, 220);
+
+                // Shoulders / Vest
+                ctx.fillStyle = cfg.color;
+                ctx.beginPath();
+                ctx.roundRect(-48, 22, 96, 65, 24);
+                ctx.fill();
+                ctx.strokeStyle = "#ffffff";
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                // Face
+                ctx.fillStyle = "#fde68a";
+                ctx.beginPath();
+                ctx.arc(0, -12, 34, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // Hair / Helmet
+                if (cfg.hair === "curly") {
+                    ctx.fillStyle = "#1e293b";
+                    [[-26, -34, 18], [0, -44, 22], [26, -34, 18], [-34, -18, 15], [34, -18, 15]].forEach(([hx, hy, hr]) => {
+                        ctx.beginPath();
+                        ctx.arc(hx, hy, hr, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+                } else if (cfg.hair === "helmet") {
+                    ctx.fillStyle = "#eab308";
+                    ctx.beginPath();
+                    ctx.arc(0, -20, 38, Math.PI, 0);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.fillRect(-44, -24, 88, 8);
+                } else {
+                    ctx.fillStyle = "#0284c7";
+                    ctx.beginPath();
+                    ctx.arc(0, -20, 36, Math.PI, 0);
+                    ctx.fill();
+                    ctx.fillRect(-10, -24, 54, 7);
+                }
+
+                // Glasses
+                ctx.strokeStyle = cfg.glasses === "goggles" ? "#38bdf8" : "#0f172a";
+                ctx.lineWidth = 3.5;
+                if (cfg.glasses === "round") {
+                    ctx.beginPath();
+                    ctx.arc(-13, -12, 10, 0, Math.PI * 2);
+                    ctx.arc(13, -12, 10, 0, Math.PI * 2);
+                    ctx.stroke();
+                } else {
+                    ctx.strokeRect(-25, -20, 20, 15);
+                    ctx.strokeRect(5, -20, 20, 15);
+                }
+
+                // Smile
+                ctx.beginPath();
+                ctx.arc(0, -3, 10, 0.15 * Math.PI, 0.85 * Math.PI);
+                ctx.stroke();
+
+                // Title Pill
+                ctx.fillStyle = "#0f172a";
+                ctx.fillRect(-75, 65, 150, 24);
+                ctx.fillStyle = "#fbbf24";
+                ctx.font = "900 13px 'Noto Sans TC', sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(cfg.title, 0, 81);
+                ctx.restore();
+            },
+            saveAvatarProfile() {
+                state.student = {
+                    className: document.getElementById("inpClass").value.trim() || "鑄造一甲",
+                    seatNo: document.getElementById("inpSeat").value.trim() || "01",
+                    name: document.getElementById("inpName").value.trim() || "王小明",
+                    hair: document.getElementById("inpHair").value,
+                    glasses: document.getElementById("inpGlasses").value,
+                    color: document.getElementById("inpColor").value,
+                    title: document.getElementById("inpTitle").value
+                };
+                saveState();
+                this.closeAvatarModal();
+            },
+
+            // 📸 Island Photo Check-in (Captures live 3D WebGL Canvas + Paper-Doll + Stats)
+            openPhotoModal() {
+                document.getElementById("photoModal").classList.remove("hidden");
+                renderer.render(scene, camera);
+
+                const snapCanvas = document.getElementById("photoSnapCanvas");
+                const ctx = snapCanvas.getContext("2d");
+                const W = snapCanvas.width, H = snapCanvas.height;
+
+                ctx.fillStyle = "#0f172a";
+                ctx.fillRect(0, 0, W, H);
+
+                // Draw live 3D Island WebGL screenshot
+                ctx.drawImage(renderer.domElement, 20, 20, W - 40, H - 120);
+
+                // Stylish Frame Border
+                ctx.strokeStyle = "#38bdf8";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(20, 20, W - 40, H - 120);
+
+                // Bottom Banner
+                ctx.fillStyle = "#0f172a";
+                ctx.fillRect(0, H - 100, W, 100);
+
+                const s = state.student;
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "900 24px 'Noto Sans TC', sans-serif";
+                ctx.textAlign = "left";
+                ctx.fillText(`🏝️ 鑄造科正投影 3D 政策島｜登島紀念打卡`, 30, H - 55);
+
+                ctx.fillStyle = "#38bdf8";
+                ctx.font = "700 18px 'Noto Sans TC', sans-serif";
+                ctx.fillText(`${s.className} ${s.seatNo}號 ${s.name}（${s.title}）｜目前闖關進度：${getTotalSolvedCount()} / 30 題 ★`, 30, H - 22);
+
+                const d = new Date();
+                ctx.fillStyle = "#94a3b8";
+                ctx.textAlign = "right";
+                ctx.font = "700 15px 'Noto Sans TC', sans-serif";
+                ctx.fillText(`打卡時間：${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`, W - 30, H - 25);
+            },
+            closePhotoModal() {
+                document.getElementById("photoModal").classList.add("hidden");
+            },
+            downloadPhotoPNG() {
+                const canvas = document.getElementById("photoSnapCanvas");
+                const a = document.createElement("a");
+                a.download = `正投影3D島嶼打卡_${state.student.name}.png`;
+                a.href = canvas.toDataURL("image/png");
+                a.click();
+            },
+
+            // 📅 Weekly Schedule Modal
+            openScheduleModal() {
+                const body = document.getElementById("scheduleModalBody");
+                body.innerHTML = ISLANDS_DATA.map((isl) => {
+                    const solved = getIslandSolvedCount(isl.id);
+                    const done = solved === 5;
+                    const qPills = isl.questions.map(q => {
+                        const ok = !!state.solved[q.id];
+                        return `<button onclick="window.app.closeScheduleModal(); window.app.openQuestion('${q.id}');" 
+                            class="px-2.5 py-1 rounded-lg text-xs font-bold border transition ${
+                                ok ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300' : 'bg-slate-900 hover:bg-sky-500 hover:text-slate-950 border-slate-700 text-slate-300'
+                            }">${ok ? '★ ' : ''}${q.id} ${q.title}</button>`;
+                    }).join("");
+
+                    return `
+                        <div class="p-4 rounded-2xl border ${done ? 'bg-emerald-950/25 border-emerald-500/40' : 'bg-slate-800/70 border-slate-700'} flex flex-col gap-2.5">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <div class="flex items-center gap-2.5">
+                                    <span class="px-2.5 py-1 rounded-xl bg-sky-500 text-slate-950 font-black text-xs">${isl.week}</span>
+                                    <h4 class="font-black text-white text-sm md:text-base">${isl.name}</h4>
+                                    <span class="text-xs font-bold text-slate-400">${isl.subtitle}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs font-black ${done ? 'text-emerald-400' : 'text-amber-400'}">${solved} / 5 題完成</span>
+                                    <button onclick="window.app.closeScheduleModal(); window.app.focusIsland(${isl.id});" class="px-3 py-1 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs">
+                                        飛往本島 ➔
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap gap-1.5">${qPills}</div>
+                        </div>
+                    `;
+                }).join("");
+                document.getElementById("scheduleModal").classList.remove("hidden");
+            },
+            closeScheduleModal() {
+                document.getElementById("scheduleModal").classList.add("hidden");
+            },
+
+            // 🏆 Completion Certificate Modal
+            openCertificateModal() {
+                document.getElementById("certificateModal").classList.remove("hidden");
+                this.drawCertificateCanvas();
+            },
+            closeCertificateModal() {
+                document.getElementById("certificateModal").classList.add("hidden");
+            },
+            drawCertificateCanvas() {
+                const canvas = document.getElementById("certCanvas");
+                const ctx = canvas.getContext("2d");
+                const W = canvas.width, H = canvas.height;
+                const totalSolved = getTotalSolvedCount();
+                const allCleared = totalSolved === 30;
+
+                const banner = document.getElementById("certStatusBanner");
+                if (allCleared) {
+                    banner.className = "text-xs md:text-sm font-bold text-emerald-400 flex items-center gap-2";
+                    banner.innerHTML = `<i class="fa-solid fa-circle-check"></i><span>恭喜完成六島三十題！已核發正式過關認證章，歡迎下載 PNG 或列印！</span>`;
+                } else {
+                    banner.className = "text-xs md:text-sm font-bold text-amber-300 flex items-center gap-2";
+                    banner.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i><span>目前進度 ${totalSolved}/30 題（預覽模式）。完成全部 30 題或點擊上方「⚡教師一鍵通關」即可解鎖正式印章！</span>`;
+                }
+
+                // Ivory Background
+                const bg = ctx.createLinearGradient(0, 0, W, H);
+                bg.addColorStop(0, "#fffbeb");
+                bg.addColorStop(1, "#fef3c7");
+                ctx.fillStyle = bg;
+                ctx.fillRect(0, 0, W, H);
+
+                // Borders
+                ctx.strokeStyle = "#b45309";
+                ctx.lineWidth = 14;
+                ctx.strokeRect(28, 28, W - 56, H - 56);
+                ctx.strokeStyle = "#d97706";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(46, 46, W - 92, H - 92);
+
+                ctx.fillStyle = "#78350f";
+                ctx.font = "900 24px 'Noto Sans TC', sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText("高職鑄造科｜機械製圖實習（華興版第五章 × 鑄造丙級檢定）", W / 2, 120);
+
+                ctx.fillStyle = "#92400e";
+                ctx.font = "900 52px 'Noto Sans TC', sans-serif";
+                ctx.fillText("正投影六島三十題・過關榮譽證書", W / 2, 190);
+
+                const { className, seatNo, name, title } = state.student;
+                ctx.fillStyle = "#0f172a";
+                ctx.font = "900 32px 'Noto Sans TC', sans-serif";
+                ctx.fillText(`茲證明  ${className}  座號：${seatNo}號  【 ${name} 】 同學（${title}）`, W / 2, 275);
+
+                ctx.fillStyle = "#334155";
+                ctx.font = "500 21px 'Noto Sans TC', sans-serif";
+                ctx.fillText("於「正投影與丙檢識圖 3D 政策島」完成六大六角浮空島嶼共三十座鑄件地標挑戰，", W / 2, 330);
+                ctx.fillText("精通正垂面、藍色單斜面、橘色複斜面之三視圖投影原理、鑄造丙檢藍圖識圖與等角圖繪製，特頒此證。", W / 2, 368);
+
+                // 6 Island Badges Grid
+                ctx.fillStyle = "#ffffff";
+                ctx.strokeStyle = "#f59e0b";
+                ctx.lineWidth = 2;
+                ctx.fillRect(100, 405, W - 200, 210);
+                ctx.strokeRect(100, 405, W - 200, 210);
+
+                ctx.fillStyle = "#92400e";
+                ctx.font = "900 20px 'Noto Sans TC', sans-serif";
+                ctx.fillText("★ 六週闖關島・學習歷程榮譽徽章 ★", W / 2, 442);
+
+                ISLANDS_DATA.forEach((isl, idx) => {
+                    const col = idx % 3;
+                    const row = Math.floor(idx / 3);
+                    const bx = 265 + col * 335;
+                    const by = 498 + row * 72;
+                    const solved = getIslandSolvedCount(isl.id);
+                    const done = solved === 5;
+
+                    ctx.fillStyle = done ? "#ecfdf5" : "#f1f5f9";
+                    ctx.strokeStyle = done ? "#10b981" : "#94a3b8";
+                    ctx.lineWidth = 2;
+                    ctx.fillRect(bx - 145, by - 30, 290, 54);
+                    ctx.strokeRect(bx - 145, by - 30, 290, 54);
+
+                    ctx.fillStyle = done ? "#065f46" : "#475569";
+                    ctx.font = "900 16px 'Noto Sans TC', sans-serif";
+                    ctx.fillText(`${isl.week}｜${isl.shortName} (${solved}/5)`, bx, by - 4);
+                    ctx.fillStyle = done ? "#059669" : "#64748b";
+                    ctx.font = "700 13px 'Noto Sans TC', sans-serif";
+                    ctx.fillText(done ? `✔ 已獲：${isl.badge}` : "尚未完成", bx, by + 16);
+                });
+
+                const d = new Date();
+                ctx.fillStyle = "#1e293b";
+                ctx.font = "700 22px 'Noto Sans TC', sans-serif";
+                ctx.textAlign = "left";
+                ctx.fillText(`總通過題數：${totalSolved} / 30 題（達成率 ${Math.round((totalSolved/30)*100)}%）`, 110, 695);
+                ctx.fillText(`核發日期：西元 ${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日`, 110, 738);
+
+                // Official Red Stamp
+                ctx.save();
+                ctx.translate(W - 230, 705);
+                ctx.rotate(-0.1);
+                ctx.strokeStyle = allCleared ? "#dc2626" : "#94a3b8";
+                ctx.lineWidth = 5;
+                ctx.strokeRect(-88, -54, 176, 108);
+                ctx.fillStyle = allCleared ? "#dc2626" : "#94a3b8";
+                ctx.textAlign = "center";
+                ctx.font = "900 21px 'Noto Sans TC', sans-serif";
+                ctx.fillText(allCleared ? "鑄造科製圖實習" : "闖關進行中", 0, -10);
+                ctx.font = "900 26px 'Noto Sans TC', sans-serif";
+                ctx.fillText(allCleared ? "過關認證章" : `進度 ${totalSolved}/30`, 0, 28);
+                ctx.restore();
+
+                if (!allCleared) {
+                    ctx.save();
+                    ctx.translate(W / 2, H / 2);
+                    ctx.rotate(-0.28);
+                    ctx.fillStyle = "rgba(220, 38, 38, 0.14)";
+                    ctx.font = "900 92px 'Noto Sans TC', sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText("闖關進行中・證書預覽", 0, 0);
+                    ctx.restore();
+                }
+            },
+            downloadCertificatePNG() {
+                this.drawCertificateCanvas();
+                const canvas = document.getElementById("certCanvas");
+                const a = document.createElement("a");
+                const { className, seatNo, name } = state.student;
+                a.download = `製圖實習第五章證書_${className}_${seatNo}_${name}.png`;
+                a.href = canvas.toDataURL("image/png");
+                a.click();
+            },
+
+            // ⚡ Teacher 1-Click Complete Demo & Reset
+            triggerTeacherDemo() {
+                const d = new Date();
+                const tStr = `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+                ISLANDS_DATA.forEach(isl => {
+                    state.islandDoneTime[isl.id] = tStr;
+                    isl.questions.forEach(q => {
+                        state.solved[q.id] = true;
+                        state.selectedOption[q.id] = q.ans;
+                    });
+                });
+                saveState();
+                this.openCertificateModal();
+            },
+
+            resetAllProgress() {
+                state.solved = {};
+                state.selectedOption = {};
+                state.islandDoneTime = {};
+                saveState();
+            }
+        };
+
+        // Cancel auto camera flight if user manually drags OrbitControls
+        renderer.domElement.addEventListener("wheel", () => { cameraTargetPos = null; controlsTargetLook = null; }, { passive: true });
+        renderer.domElement.addEventListener("pointerdown", () => { cameraTargetPos = null; controlsTargetLook = null; });
+
+        // Window Resize Handler
+        window.addEventListener("resize", () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            resizeModalThree();
+        });
+
+        // =========================================================================
+        // 10. MAIN ANIMATION LOOP (3D WAVES, FLOATING MODELS, NPC PATROL & 2D PROJECTION)
+        // =========================================================================
+        const clock = new THREE.Clock();
+        const tempProjVec = new THREE.Vector3();
+
+        function projectToScreen(worldVec, domEl) {
+            tempProjVec.copy(worldVec);
+            tempProjVec.project(camera);
+            if (tempProjVec.z > 1) {
+                domEl.style.opacity = "0";
+                domEl.style.pointerEvents = "none";
+                return;
+            }
+            const x = (tempProjVec.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-(tempProjVec.y * 0.5) + 0.5) * window.innerHeight;
+            domEl.style.left = `${x}px`;
+            domEl.style.top = `${y}px`;
+            domEl.style.opacity = "1";
+            domEl.style.pointerEvents = "auto";
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const elapsed = clock.getElapsedTime();
+
+            // 1. Smoothly Lerp Camera if flying to a Hexagonal Island
+            if (cameraTargetPos && controlsTargetLook) {
+                camera.position.lerp(cameraTargetPos, 0.06);
+                controls.target.lerp(controlsTargetLook, 0.06);
+                if (camera.position.distanceTo(cameraTargetPos) < 0.4) {
+                    cameraTargetPos = null;
+                    controlsTargetLook = null;
+                }
+            }
+            controls.update();
+
+            // 2. Animate Low-Poly Water Waves
+            for (let i = 0; i < waterPosAttr.count; i++) {
+                const vx = waterPosAttr.getX(i);
+                const vz = waterPosAttr.getZ(i);
+                const wave = Math.sin(vx * 0.08 + elapsed * 1.6) * 0.35 + Math.cos(vz * 0.08 + elapsed * 1.3) * 0.35;
+                waterPosAttr.setY(i, waterBaseY[i] + wave);
+            }
+            waterPosAttr.needsUpdate = true;
+
+            // 3. Drift Low-Poly Clouds
+            cloudsGroup.children.forEach((c) => {
+                c.position.x += c.userData.speed;
+                if (c.position.x > 100) c.position.x = -100;
+            });
+
+            // 4. Gently Bob & Rotate the 30 Miniature Casting Landmarks on the Islands
+            Object.values(buildingEntries).forEach((entry, idx) => {
+                entry.miniModel.rotation.y = elapsed * 0.45 + idx;
+                entry.miniModel.position.y = 3.2 + Math.sin(elapsed * 2 + idx) * 0.22;
+            });
+
+            // 5. Animate Collaboration Bezier Energy Pulses
+            if (collabEnabled) {
+                collabPulses.forEach((p) => {
+                    p.t = (p.t + 0.005) % 1;
+                    p.mesh.position.copy(p.curve.getPoint(p.t));
+                });
+                collabDomLabels.forEach((l) => {
+                    projectToScreen(l.worldPos, l.domEl);
+                    l.domEl.style.pointerEvents = "none";
+                });
+            }
+
+            // 6. Animate Walking Curly-Hair NPC between Island Soapboxes
+            const wpA = npcWaypoints[npcSegmentIdx];
+            const wpB = npcWaypoints[(npcSegmentIdx + 1) % npcWaypoints.length];
+            if (npcPauseTimer > 0) {
+                npcPauseTimer -= 0.016;
+                // Wave on the soapbox!
+                npcGroup.position.copy(wpA);
+                npcGroup.position.y = 3.2 + Math.abs(Math.sin(elapsed * 6)) * 0.35;
+                npcGroup.rotation.y += 0.03;
+            } else {
+                npcSegmentProgress += 0.0025;
+                if (npcSegmentProgress >= 1) {
+                    npcSegmentProgress = 0;
+                    npcSegmentIdx = (npcSegmentIdx + 1) % npcWaypoints.length;
+                    npcPauseTimer = 3.0; // Pause on the island's soapbox for 3 seconds!
+                } else {
+                    npcGroup.position.lerpVectors(wpA, wpB, npcSegmentProgress);
+                    npcGroup.position.y = 2.0 + Math.abs(Math.sin(elapsed * 10)) * 0.28;
+                    npcGroup.lookAt(wpB.x, npcGroup.position.y, wpB.z);
+                }
+            }
+            projectToScreen(npcGroup.position.clone().add(new THREE.Vector3(0, 4.8, 0)), npcBubbleDom);
+
+            // 7. Update 2D Projected Positions of Island Headers & 30 Building Pins
+            islandAnchors.forEach((a) => projectToScreen(a.worldPos, a.domEl));
+            Object.values(buildingEntries).forEach((entry) => projectToScreen(entry.worldPos, entry.domPin));
+
+            renderer.render(scene, camera);
+
+            // 8. Render Secondary Modal Orthographic 3D-to-3-View Viewer if Open
+            if (isModalThreeInit && !document.getElementById("questionModal").classList.contains("hidden")) {
+                const container = document.getElementById("modalThreeContainer");
+                const w = container.clientWidth;
+                const h = container.clientHeight;
+
+                if (w > 0 && h > 0) {
+                    if (modalViewMode === "quad") {
+                        // Render 4 Synchronized Quadrants (Third-Angle Projection L-Layout)
+                        modalRenderer.setScissorTest(true);
+                        const halfW = Math.floor(w / 2);
+                        const halfH = Math.floor(h / 2);
+
+                        // 1. Top-Left: Top View (俯視圖 H)
+                        quadCamTop.position.set(0, 240, 0.001);
+                        quadCamTop.up.set(0, 0, -1);
+                        quadCamTop.lookAt(0, 0, 0);
+                        modalRenderer.setViewport(0, halfH, halfW, h - halfH);
+                        modalRenderer.setScissor(0, halfH, halfW, h - halfH);
+                        modalRenderer.render(modalScene, quadCamTop);
+
+                        // 2. Bottom-Left: Front View (前視圖 V)
+                        quadCamFront.position.set(0, 0, 240);
+                        quadCamFront.up.set(0, 1, 0);
+                        quadCamFront.lookAt(0, 0, 0);
+                        modalRenderer.setViewport(0, 0, halfW, halfH);
+                        modalRenderer.setScissor(0, 0, halfW, halfH);
+                        modalRenderer.render(modalScene, quadCamFront);
+
+                        // 3. Bottom-Right: Right Side View (右側視圖 P)
+                        quadCamRight.position.set(240, 0, 0);
+                        quadCamRight.up.set(0, 1, 0);
+                        quadCamRight.lookAt(0, 0, 0);
+                        modalRenderer.setViewport(halfW, 0, w - halfW, halfH);
+                        modalRenderer.setScissor(halfW, 0, w - halfW, halfH);
+                        modalRenderer.render(modalScene, quadCamRight);
+
+                        // 4. Top-Right: Interactive 3D Isometric View
+                        const r = 240;
+                        quadCamIso.position.set(
+                            r * Math.sin(modalOrbitAngles.phi) * Math.sin(modalOrbitAngles.theta),
+                            r * Math.cos(modalOrbitAngles.phi),
+                            r * Math.sin(modalOrbitAngles.phi) * Math.cos(modalOrbitAngles.theta)
+                        );
+                        quadCamIso.up.set(0, 1, 0);
+                        quadCamIso.lookAt(0, 0, 0);
+                        modalRenderer.setViewport(halfW, halfH, w - halfW, h - halfH);
+                        modalRenderer.setScissor(halfW, halfH, w - halfW, h - halfH);
+                        modalRenderer.render(modalScene, quadCamIso);
+
+                        modalRenderer.setScissorTest(false);
+                        modalRenderer.setViewport(0, 0, w, h);
+                    } else {
+                        // Smooth Single-View Orthographic Interpolation (No Gimbal Lock!)
+                        modalRenderer.setScissorTest(false);
+                        modalRenderer.setViewport(0, 0, w, h);
+                        modalCamPos.lerp(modalTargetCamPos, 0.18);
+                        modalCamUp.lerp(modalTargetCamUp, 0.18).normalize();
+                        modalCamera.position.copy(modalCamPos);
+                        modalCamera.up.copy(modalCamUp);
+                        modalCamera.lookAt(0, 0, 0);
+                        modalRenderer.render(modalScene, modalCamera);
+                    }
+                }
+            }
+        }
+
+        // Initialize State & Start Loop on Load
+        window.onload = () => {
+            loadState();
+            updateAllHUD();
+            animate();
+        };
+    </script>
+</body>
+</html>
